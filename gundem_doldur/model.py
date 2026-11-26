@@ -1,8 +1,12 @@
 """Belgelerin okunduktan sonra temsil edildiği basit veri modeli."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Union
+
+
+_SAYI = re.compile(r"\d{3,}")
 
 
 @dataclass
@@ -48,7 +52,12 @@ class Table:
             if not parts:
                 continue
             multi = [p for p in parts if len(p) > 1]
-            if len(multi) >= 2 and len({len(p) for p in multi}) == 1:
+            # Hücre içinde hem sayılı (sicil) hem sayısız (isim/görev) satır varsa her hücre bir
+            # hakimdir (imza tablosu: 'Başkan / Ali Veli / 12345' | 'Üye / ...'): hücreyi tek satır yap
+            karisik = [p for p in multi if any(_SAYI.search(l) for l in p) and any(not _SAYI.search(l) for l in p)]
+            if len(parts) >= 2 and len(karisik) >= 2:
+                out.extend(" ".join(p) for p in parts)
+            elif len(multi) >= 2 and len({len(p) for p in multi}) == 1:
                 k = len(multi[0])
                 for i in range(k):
                     out.append("\t".join(p[i] if len(p) == k else (p[0] if i == 0 else "") for p in parts)
