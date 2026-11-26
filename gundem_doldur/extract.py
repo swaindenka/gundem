@@ -36,6 +36,7 @@ class CaseData:
     konu: str = ""
     alt_bolum: str = ""
     alt_kaynak: str = ""  # hakim bilgilerinin bulunduğu yer: yildiz / emsal / genel / ''
+    alt_konum: float = 1.0  # hakim listesinin belgedeki konumu (0 = baş, 1 = son); uzun belgede
     uyarilar: List[str] = field(default_factory=list)
 
 
@@ -234,8 +235,9 @@ TEK = "tek"         # "İlk kararı veren ilk derece mahkemesi ... hakimi Ad Soy
 
 
 def _is_star_line(line: str) -> bool:
+    """'*******' işareti. Metin içindeki '***' / '* * *' gibi kısa ayraçlar sayılmaz."""
     s = line.replace(" ", "").replace("\t", "")
-    return len(s) >= 3 and set(s) <= set("*")
+    return len(s) >= 5 and set(s) <= set("*")
 
 
 _STRONG_START = re.compile(r"KARARI(NI)?\s+VEREN|HUKMU\s+VEREN")
@@ -426,33 +428,57 @@ def _clean_lines(lines: List[str]) -> List[str]:
 
 def _hakim_satiri_mi(line: str) -> bool:
     n = norm(line)
+    if _TETKIK.search(n):
+        return False  # raporu yazan tetkik hakiminin imzası hakim listesine dahil değildir
     return bool(_STRONG_START.search(n) or _HAKIMLERI.search(n) or _HAKIMI.search(n)
                 or _uye_ayristir(_hazirla(line)) is not None or _ROL_BAS.match(norm(_hazirla(line))))
 
 
-def _judge_blocks(lines: List[str]) -> List[List[str]]:
-    """Belge gövdesindeki ardışık hakim satırı bloklarını bulur (Emsal sonrası / genel arama için)."""
-    blocks: List[List[str]] = []
+def _bloklar(lines: List[str], siki: bool = True) -> List[Tuple[int, int]]:
+    """Ardışık hakim satırı bloklarını (başlangıç, bitiş) indeksleriyle bulur."""
+    blocks: List[Tuple[int, int]] = []
     i, n = 0, len(lines)
     while i < n:
         if _is_star_line(lines[i]) or not _hakim_satiri_mi(lines[i]):
             i += 1
             continue
         j = i
-        block: List[str] = []
-        while j < n and not _is_star_line(lines[j]):
-            l = lines[j]
-            h = _hazirla(l)
-            if (_hakim_satiri_mi(l) or _isim_gibi(h) or _SICIL_TEK.match(norm(h)) or degerlendirme_mi(h)
-                    or not h.strip(" :-–.")):
-                block.append(l)
+        while j < n and not _is_star_line(lines[j]) and not _TETKIK.search(norm(lines[j])):
+            h = _hazirla(lines[j])
+            if (_hakim_satiri_mi(lines[j]) or _isim_gibi(h) or _SICIL_TEK.match(norm(h))
+                    or degerlendirme_mi(h) or not h.strip(" :-–.")):
                 j += 1
             else:
                 break
-        if _hakim_iceriyor(_kalemler(block), siki=True):
-            blocks.append(block)
+        if _hakim_iceriyor(_kalemler(lines[i:j]), siki=siki):
+            blocks.append((i, j))
         i = max(j, i + 1)
     return blocks
+
+
+_KUME_ARALIGI = 4  # bloklar arasında en fazla bu kadar alakasız satır varsa aynı listedir
+
+
+def _kumeler(lines: List[str], siki: bool = True) -> List[Tuple[int, int]]:
+    """Birbirine yakın hakim bloklarını tek liste (küme) olarak birleştirir.
+
+    Ör. ilk derece hakimi satırı, bir boş/ara satır, ardından BAM hakimleri: tek küme.
+    """
+    kumeler: List[Tuple[int, int]] = []
+    for a, b in _bloklar(lines, siki):
+        if kumeler:
+            pa, pb = kumeler[-1]
+            ara = lines[pb:a]
+            if (a - pb <= _KUME_ARALIGI and not any(_is_star_line(l) for l in ara)
+                    and not any(_TETKIK.search(norm(l)) for l in ara)):
+                kumeler[-1] = (pa, b)
+                continue
+        kumeler.append((a, b))
+    return kumeler
+
+
+def _judge_blocks(lines: List[str]) -> List[List[str]]:
+    return [lines[a:b] for a, b in _bloklar(lines)]
 
 
 def _tetkikte_kes(section: List[str]) -> List[str]:
@@ -463,38 +489,68 @@ def _tetkikte_kes(section: List[str]) -> List[str]:
     return section
 
 
+_UZUN_BOLUM = 40  # yıldız altı bundan uzunsa, ortadaki bir ayraçtan başlayıp metnin geri kalanını içeriyordur
+
+
 def find_alt_bolum(doc: Document) -> Tuple[str, str]:
+    metin, kaynak, _ = _alt_bolum_bul(doc)
+    return metin, kaynak
+
+
+def _alt_bolum_bul(doc: Document) -> Tuple[str, str, float]:
     """Hakim bilgilerini bulur. (metin, kaynak) döndürür; kaynak: yildiz / emsal / genel / ''.
 
-    1. '*******' işaretinin altı (hakim bilgisi içeriyorsa)
-    2. Yoksa 'Emsal' bölümünden sonra gelen hakim satırları
-    3. Yoksa belgedeki son hakim satırı bloğu
+    Hakim isimleri ve sicilleri belgenin SON sayfalarında yer alır. Bu yüzden adaylar arasından
+    belgenin sonuna en yakın olan seçilir:
+      - '*******' altındaki bölümler (hakim bilgisi içeriyorsa)
+      - belge içindeki hakim listeleri (isim içeren BAŞKAN/ÜYE satırları vb.)
+    Ortadaki bir yıldız ayracı ya da metin içinde alıntılanan eski bir karar, sondaki gerçek
+    listenin önüne geçemez.
     """
     lines = _clean_lines(doc.lines(satir_bazli=True, atla=degerlendirme_mi))
     stars = [i for i, l in enumerate(lines) if _is_star_line(l)]
-    fallback: Optional[List[str]] = None
-    for idx in reversed(stars):
-        end = next((j for j in stars if j > idx), len(lines))
+
+    # (başlangıç, bitiş, kaynak) adayları; indeksler `lines` içindeki mutlak konumlardır
+    adaylar: List[Tuple[int, int, str]] = []
+    fallback: Optional[Tuple[int, int]] = None
+    for k, idx in enumerate(stars):
+        end = stars[k + 1] if k + 1 < len(stars) else len(lines)
         section = _tetkikte_kes(lines[idx + 1:end])
         if not section:
             continue
-        if fallback is None:
-            fallback = section
-        if _hakim_iceriyor(_kalemler(section)):
-            return "\n".join(section), "yildiz"
+        a, b = idx + 1, idx + 1 + len(section)
+        fallback = (a, b)
+        if not _hakim_iceriyor(_kalemler(section)):
+            continue
+        if len(section) > _UZUN_BOLUM:
+            # Uzun bölüm: yalnızca sondaki hakim listesini al
+            kumeler = _kumeler(section, siki=False)
+            if not kumeler:
+                continue
+            ka, kb = kumeler[-1]
+            a, b = idx + 1 + ka, idx + 1 + kb
+        adaylar.append((a, b, "yildiz"))
 
     emsal = [i for i, l in enumerate(lines) if "EMSAL" in norm(l)]
-    for idx in reversed(emsal):
-        blocks = _judge_blocks(lines[idx + 1:])
-        if blocks:
-            return "\n".join(blocks[0]), "emsal"
+    tetkik = [i for i, l in enumerate(lines) if _TETKIK.search(norm(l))]
+    for a, b in _kumeler(lines, siki=True):
+        if any(sa <= a < sb for sa, sb, _ in adaylar):
+            continue  # zaten bir yıldız bölümünün içinde
+        if any(0 < a - t <= 3 for t in tetkik):
+            continue  # 'Tetkik Hakimi' imzasının altındaki isim: hakim listesi değil
+        kaynak = "emsal" if any(e < a for e in emsal) else "genel"
+        adaylar.append((a, b, kaynak))
 
-    blocks = _judge_blocks(lines)
-    if blocks:
-        return "\n".join(blocks[-1]), "genel"
+    def konum(b: int) -> float:
+        # kısa belgelerde konum anlamsız; uyarı yalnızca uzun belgeler için
+        return b / len(lines) if len(lines) > 150 else 1.0
+
+    if adaylar:
+        a, b, kaynak = max(adaylar, key=lambda x: (x[0], x[2] == "yildiz"))
+        return "\n".join(lines[a:b]), kaynak, konum(b)
     if fallback:
-        return "\n".join(fallback), "yildiz"
-    return "", ""
+        return "\n".join(lines[fallback[0]:fallback[1]]), "yildiz", konum(fallback[1])
+    return "", "", 1.0
 
 
 def alt_bolum_duzenle(text: str) -> str:
@@ -521,6 +577,9 @@ def uyarilari_hesapla(data: CaseData) -> List[str]:
         uyarilar.append("Hakim bilgileri '*******' altında yoktu; 'Emsal' bölümünden sonra bulundu. Kontrol edin.")
     elif data.alt_kaynak == "genel":
         uyarilar.append("Hakim bilgileri '*******' altında yoktu; belgenin içinden bulundu. Kontrol edin.")
+    if data.alt_bolum and data.alt_konum < 0.8:
+        uyarilar.append("DİKKAT: Hakim bilgileri belgenin sonundan değil, ortalarından (yaklaşık %%%d) alındı. "
+                        "Son sayfalardaki listeyle karşılaştırın." % round(data.alt_konum * 100))
     return uyarilar
 
 
@@ -533,7 +592,7 @@ def extract_case(doc: Document, kaynak: str = "") -> CaseData:
     data.daire = h.get("daire", "")
     data.daire_karar = h.get("daire_karar", "")
     data.konu = h.get("konu", "")
-    ham, data.alt_kaynak = find_alt_bolum(doc)
+    ham, data.alt_kaynak, data.alt_konum = _alt_bolum_bul(doc)
     # Kutuda tabloya yazılacak düzenlenmiş hali gösterilir (BAŞKAN : Ad Soyad  (sicil));
     # böylece görev/isim/sicil doğru ayrıldı mı kullanıcı kaydetmeden görebilir.
     data.alt_bolum = alt_bolum_duzenle(ham)

@@ -72,8 +72,7 @@ def birlestir(parcalar: List[Parca]) -> CaseData:
     """Bölümleri tek davaya birleştirir.
 
     - Üst tablo alanları: numarası en küçük olan ve o alanı içeren bölümden
-    - Hakim bilgileri: '*******' altında bulunan en son bölümden; yoksa Emsal sonrası,
-      o da yoksa belge içinde bulunan en son bölümden
+    - Hakim bilgileri: hakim bilgisi bulunan en son bölümden
     """
     sirali = sorted(parcalar, key=lambda p: p.no)
     sonuc = CaseData(kaynak=sirali[0].yol)
@@ -85,9 +84,11 @@ def birlestir(parcalar: List[Parca]) -> CaseData:
                 break
     adaylar = [p for p in sirali if p.veri.alt_bolum]
     if adaylar:
-        en_iyi = min(adaylar, key=lambda p: (_KAYNAK_ONCELIK.get(p.veri.alt_kaynak, 3), -p.no))
+        # Hakim isimleri belgenin sonunda olur: en son bölüm öncelikli, eşitlikte '*******' altı
+        en_iyi = min(adaylar, key=lambda p: (-p.no, _KAYNAK_ONCELIK.get(p.veri.alt_kaynak, 3)))
         sonuc.alt_bolum = en_iyi.veri.alt_bolum
         sonuc.alt_kaynak = en_iyi.veri.alt_kaynak
+        sonuc.alt_konum = en_iyi.veri.alt_konum
 
     uyarilar: List[str] = []
     for p in sirali:

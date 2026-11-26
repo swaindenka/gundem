@@ -51,6 +51,12 @@ Program hakim satırlarını şablondaki biçime getirir: `BAŞKAN : Ad Soyad  (
 - Görevler bir sütunda alt alta, isimler ve siciller yan sütunlarda
 - Görevler: BAŞKAN, BAŞKAN V., BAŞKANVEKİLİ, KIDEMLİ ÜYE, ÜYE, HAKİM
 
+Hakim isimleri ve sicilleri belgenin **son sayfalarında** yer aldığından, belgede birden çok aday
+varsa (ör. metnin ortasında alıntılanan eski bir kararın hakimleri, ortadaki bir `***` ayracı)
+**belgenin sonuna en yakın liste** alınır. Yıldız işareti en az 5 yıldızdan oluşmalıdır; metin
+içindeki `***` / `* * *` ayraçları sayılmaz. Uzun bir belgede liste sondan değil de ortalardan
+alınmak zorunda kalınırsa program "DİKKAT" uyarısı gösterir.
+
 Yıldızın altındaki "Tetkik Hakimi ..." imzası hakim listesine alınmaz. Hakimler kutusunda
 düzenlenmiş hali görünür; görev / isim / sicil doğru ayrılmamışsa kaydetmeden önce düzeltebilirsiniz.
 
