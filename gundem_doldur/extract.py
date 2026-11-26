@@ -35,6 +35,7 @@ class CaseData:
     daire_karar: str = ""
     konu: str = ""
     alt_bolum: str = ""
+    alt_kaynak: str = ""  # hakim bilgilerinin bulunduğu yer: yildiz / emsal / genel / ''
     uyarilar: List[str] = field(default_factory=list)
 
 
@@ -353,6 +354,23 @@ def parse_alt_bolum(text: str) -> List[Tuple[str, str]]:
 
 
 # --------------------------------------------------------------------------
+def uyarilari_hesapla(data: CaseData) -> List[str]:
+    uyarilar: List[str] = []
+    alanlar = (("Esas", "esas"), ("Mahkeme", "mahkeme"), ("Daire", "daire"), ("Konu", "konu"))
+    eksik = [ad for ad, k in alanlar if not getattr(data, k)]
+    if len(eksik) == len(alanlar):
+        uyarilar.append("Belgenin üstündeki tablo bulunamadı; esas/mahkeme/daire/konu alanlarını elle doldurun.")
+    elif eksik:
+        uyarilar.append("Bulunamayan alanlar: %s" % ", ".join(eksik))
+    if not data.alt_bolum:
+        uyarilar.append("Hakim bilgileri bulunamadı ('*******' altında ve 'Emsal' bölümünden sonra bakıldı).")
+    elif data.alt_kaynak == "emsal":
+        uyarilar.append("Hakim bilgileri '*******' altında yoktu; 'Emsal' bölümünden sonra bulundu. Kontrol edin.")
+    elif data.alt_kaynak == "genel":
+        uyarilar.append("Hakim bilgileri '*******' altında yoktu; belgenin içinden bulundu. Kontrol edin.")
+    return uyarilar
+
+
 def extract_case(doc: Document, kaynak: str = "") -> CaseData:
     data = CaseData(kaynak=kaynak)
     h = extract_header(doc)
@@ -362,23 +380,20 @@ def extract_case(doc: Document, kaynak: str = "") -> CaseData:
     data.daire = h.get("daire", "")
     data.daire_karar = h.get("daire_karar", "")
     data.konu = h.get("konu", "")
-    data.alt_bolum, alt_kaynak = find_alt_bolum(doc)
-    if not h:
-        data.uyarilar.append("Belgenin üstündeki tablo bulunamadı; esas/mahkeme/daire/konu alanlarını elle doldurun.")
-    else:
-        eksik = [ad for ad, k in (("Esas", "esas"), ("Mahkeme", "mahkeme"), ("Daire", "daire"), ("Konu", "konu"))
-                 if not h.get(k)]
-        if eksik:
-            data.uyarilar.append("Bulunamayan alanlar: %s" % ", ".join(eksik))
-    if not data.alt_bolum:
-        data.uyarilar.append("Hakim bilgileri bulunamadı ('*******' altında ve 'Emsal' bölümünden sonra bakıldı).")
-    elif alt_kaynak == "emsal":
-        data.uyarilar.append("Hakim bilgileri '*******' altında yoktu; 'Emsal' bölümünden sonra bulundu. Kontrol edin.")
-    elif alt_kaynak == "genel":
-        data.uyarilar.append("Hakim bilgileri '*******' altında yoktu; belgenin içinden bulundu. Kontrol edin.")
+    data.alt_bolum, data.alt_kaynak = find_alt_bolum(doc)
+    data.uyarilar = uyarilari_hesapla(data)
     return data
 
 
-def looks_complete(doc: Document) -> bool:
-    """Yerleşik .doc okuyucunun sonucunun kullanılabilir olup olmadığını kabaca denetler."""
-    return bool(extract_header(doc)) and bool(extract_alt_bolum(doc))
+def looks_complete(doc: Document, bolum: bool = False) -> bool:
+    """Yerleşik .doc okuyucunun sonucunun kullanılabilir olup olmadığını kabaca denetler.
+
+    Bölümlere ayrılmış dosyalarda (bolum=True) üst tablo ilk bölümde, hakimler son bölümde
+    olduğundan ikisinden birinin bulunması yeterlidir.
+    """
+    tablo = bool(extract_header(doc))
+    hakim = bool(extract_alt_bolum(doc))
+    if bolum:
+        # ara bölümlerde tablo da hakim de olmayabilir: metin düzgün okunduysa yeterli
+        return tablo or hakim or len("".join(doc.lines()).strip()) > 200
+    return tablo and hakim
