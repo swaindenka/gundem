@@ -17,6 +17,16 @@ from .extract import CaseData, extract_case, looks_complete, norm
 from .reader import read_document
 from .writer import AYLAR, build_gundem, gundem_basligi
 
+# (arayüzde görünen ad, writer.build_gundem 'duzen' değeri)
+DUZEN_SECENEKLERI = [
+    ("Otomatik: her dava tek sayfaya sığsın", "otomatik"),
+    ("Klasik: şablondaki gibi", "klasik"),
+    ("Kompakt: heyet başlığı solda", "kompakt"),
+    ("Kompakt, küçük yazı (10 pt)", "kompakt-10"),
+    ("Kompakt, daha küçük yazı (9 pt)", "kompakt-9"),
+    ("Kompakt, en küçük yazı (8 pt)", "kompakt-8"),
+]
+
 ALANLAR = [
     # (anahtar, etiket, satır sayısı; 1 = tek satırlık giriş)
     ("sira_no", "Sıra No", 1),
@@ -44,7 +54,7 @@ class App(tk.Tk):
     def __init__(self, ilk_dosyalar: List[str]):
         super().__init__()
         self.title("Gündem Doldurucu %s" % __version__)
-        self.geometry("1100x720")
+        self.geometry("1280x740")
         self.minsize(900, 600)
         self.davalar: List[Dava] = []
         self.current: Optional[int] = None
@@ -92,6 +102,12 @@ class App(tk.Tk):
         hakim_kutu.pack(side="left", padx=8, fill="y")
         self.tetkik = tk.StringVar(value="")
         ttk.Entry(hakim_kutu, textvariable=self.tetkik, width=28).pack()
+
+        duzen_kutu = ttk.LabelFrame(top, text="Sayfa düzeni", padding=6)
+        duzen_kutu.pack(side="left", padx=8, fill="y")
+        self.duzen = tk.StringVar(value=DUZEN_SECENEKLERI[0][0])
+        ttk.Combobox(duzen_kutu, textvariable=self.duzen, state="readonly", width=34,
+                     values=[e for e, _ in DUZEN_SECENEKLERI]).pack()
 
         main = ttk.PanedWindow(self, orient="horizontal")
         main.pack(fill="both", expand=True, padx=8)
@@ -344,8 +360,9 @@ class App(tk.Tk):
         )
         if not out:
             return
+        duzen = dict(DUZEN_SECENEKLERI).get(self.duzen.get(), "otomatik")
         try:
-            build_gundem(self.template, self.cases, tarih, out, self.tetkik.get())
+            secimler = build_gundem(self.template, self.cases, tarih, out, self.tetkik.get(), duzen)
         except PermissionError:
             messagebox.showerror("Kaydedilemedi", "Dosya başka bir programda açık olabilir:\n%s" % out)
             return
@@ -354,7 +371,18 @@ class App(tk.Tk):
             messagebox.showerror("Hata", "Gündem oluşturulamadı:\n%s" % e)
             return
         self.durum.config(text="Kaydedildi: %s" % out)
-        if messagebox.askyesno("Tamamlandı", "Gündem oluşturuldu:\n%s\n\nŞimdi açılsın mı?" % out):
+        notlar = []
+        sigmayan = [c.sira_no or str(i + 1) for i, (c, (_, sigar)) in enumerate(zip(self.cases, secimler)) if not sigar]
+        sikistirilan = [c.sira_no or str(i + 1) for i, (c, (ad, _)) in enumerate(zip(self.cases, secimler))
+                        if ad != "klasik"]
+        if duzen == "otomatik" and sikistirilan:
+            notlar.append("Tek sayfaya sığması için kompakt düzen / küçük yazı kullanılan sıra no: %s"
+                          % ", ".join(sikistirilan))
+        if sigmayan:
+            notlar.append("DİKKAT: Şu sıra no'lardaki davalar çok sayıda hakim nedeniyle tek sayfaya "
+                          "sığmayabilir: %s" % ", ".join(sigmayan))
+        ek = ("\n\n" + "\n".join(notlar)) if notlar else ""
+        if messagebox.askyesno("Tamamlandı", "Gündem oluşturuldu:\n%s%s\n\nŞimdi açılsın mı?" % (out, ek)):
             try:
                 if sys.platform == "win32":
                     os.startfile(out)  # type: ignore[attr-defined]

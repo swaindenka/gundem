@@ -24,6 +24,20 @@ Kaynak Word belgelerindeki bilgileri okuyup **gündem tablosunu** (`sablon/BASLI
    ayrı sayfada, sıra numarasıyla yer alır (sırayı ▲ ▼ ile değiştirebilirsiniz). Her sayfanın
    başında tarih ve tetkik hakimi başlığı tekrarlanır.
 
+### Her dava tek sayfada
+
+Hakim sayısı arttığında dava sayfası ikinci sayfaya taşmasın diye **Sayfa düzeni** seçeneği vardır.
+Varsayılan **Otomatik**'tir: program her davanın yüksekliğini tahmin eder ve sığana kadar sırayla şunları dener:
+
+1. **Klasik** – şablondaki düzen (sığıyorsa hiçbir şey değişmez)
+2. **Kompakt** – "... Hâkimleri" başlığı solda dar sütunda, o heyetin hakimlerini dikey olarak kapsar;
+   hakimler sağda, her birinin karşısında değerlendirme kutuları
+3. **Kompakt, 10 / 9 / 8 pt** – daha küçük yazı ve daha alçak satırlar; son kademelerde oylama
+   bölümündeki boş satırların bir kısmı çıkarılır
+
+Gündem kaydedildiğinde hangi davaların sıkıştırıldığı ve (çok fazla hakim varsa) hangilerinin yine de
+sığmayabileceği bildirilir. İstenirse düzen elle de seçilebilir.
+
 ### Bölümlere ayrılmış dosyalar
 
 Uzun dosyalar parçalara ayrılıp dosya adında bölüm belirtildiyse program bunları **tek dava** olarak

@@ -4,11 +4,12 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import re
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 import docx
 from docx.oxml.ns import qn
 
+from . import duzen as dz
 from .extract import BASLIK, UYE, CaseData, norm, parse_alt_bolum
 
 AYLAR = ["OCAK", "ŞUBAT", "MART", "NİSAN", "MAYIS", "HAZİRAN", "TEMMUZ",
@@ -210,6 +211,30 @@ class _Template:
         self.proto_baslik = copy.deepcopy(self.proto_baslik)
         self.proto_uye = copy.deepcopy(self.proto_uye)
         self.proto_tek = copy.deepcopy(self.proto_tek)
+        self.olculer = self._olculer(rows, variable)
+
+    def _olculer(self, rows, variable) -> "dz.SablonOlculeri":
+        """Sayfaya sığdırma tahmini için şablonun ölçüleri."""
+        def tr_h(tr, varsayilan):
+            trpr = tr.find(qn("w:trPr"))
+            if trpr is not None and trpr.trHeight_val is not None:
+                return int(trpr.trHeight_val.twips)
+            return varsayilan
+
+        ic = next((t for t in self.proto_uye.iter(qn("w:tbl"))), None)
+        deger_satirlari = ic.findall(qn("w:tr")) if ic is not None else []
+        deger_satir = tr_h(deger_satirlari[0], 291) if deger_satirlari else 291
+        deger_min = sum(max(tr_h(tr, 0), 240) for tr in deger_satirlari) + 60 if deger_satirlari else 600
+        grid = tuple(int(g.get(qn("w:w"))) for g in self.case_tbl.find(qn("w:tblGrid")).findall(qn("w:gridCol")))
+        # Değişmeyen kısımlar: başlık tablosu, boşluk, dava tablosunun ilk 3 satırı, oylama bölümü.
+        # Değer, yerleşik şablon için LibreOffice çıktısıyla ölçülerek ayarlanmıştır.
+        oylama = [el for el in self.case_block[1:] if el.tag == qn("w:p")]
+        sabit = 2150 + sum(tr_h(r, 400) for r in rows[:3]) + 300 * len(oylama)
+        return dz.SablonOlculeri(
+            sabit=sabit, oylama_bosluk=300, yazi=11.0, satir_min=tr_h(self.proto_uye, 700),
+            baslik_min=tr_h(self.proto_baslik, 250), deger_min=deger_min, deger_satir=deger_satir,
+            grid=grid,
+        )
 
 
 def _fill_header(tpl: _Template, tarih: dt.date, tetkik_hakimi: str):
@@ -243,7 +268,29 @@ def _fill_header(tpl: _Template, tarih: dt.date, tetkik_hakimi: str):
                 colon_run.addnext(_make_run(name_proto, tetkik_hakimi.strip()))
 
 
-def _build_case(tpl: _Template, case: CaseData, fixer: _IdFixer):
+def _oylama_bosluklarini_azalt(block, adet: int) -> None:
+    """Oylama bölümündeki (kenarlıksız) boş paragraflardan `adet` kadarını siler."""
+    if adet <= 0:
+        return
+    paragraflar = [el for el in block[1:] if el.tag == qn("w:p")]
+    bas = next((i for i, p in enumerate(paragraflar) if "OYLAMA" in _el_text(p).upper()), None)
+    if bas is None:
+        return
+    adaylar = []
+    for p in paragraflar[bas + 1:]:
+        if "OYLAMA" in _el_text(p).upper():
+            break
+        ppr = p.find(qn("w:pPr"))
+        kenarlik = ppr is not None and ppr.find(qn("w:pBdr")) is not None
+        if not _el_text(p).strip() and not kenarlik:
+            adaylar.append(p)
+    for p in adaylar[:adet]:
+        p.getparent().remove(p) if p.getparent() is not None else block.remove(p)
+        if p in block:
+            block.remove(p)
+
+
+def _build_case(tpl: _Template, case: CaseData, fixer: _IdFixer, duzen: "dz.Duzen" = dz.KADEMELER[0]):
     block = [copy.deepcopy(el) for el in tpl.case_block]
     tbl = block[0]
     rows = _children(tbl, "w:tr")
@@ -261,21 +308,52 @@ def _build_case(tpl: _Template, case: CaseData, fixer: _IdFixer):
     anchor = rows[2]
     for r in old_rows:
         tbl.remove(r)
-    for kind, text in parse_alt_bolum(case.alt_bolum):
-        if kind == BASLIK:
-            row = copy.deepcopy(tpl.proto_baslik)
-            set_cell_lines(_tcs(row)[0], text, bold=True)
-        elif kind == UYE:
-            row = copy.deepcopy(tpl.proto_uye)
-            set_cell_lines(_tcs(row)[0], text)
-        else:
-            row = copy.deepcopy(tpl.proto_tek)
-            set_cell_lines(_tcs(row)[0], text)
+    kalemler = parse_alt_bolum(case.alt_bolum)
+    grid = tpl.olculer.grid
+    yeni_satirlar = []
+    if duzen.kompakt:
+        for tur, metin, sol, birlestirme in dz.kalemleri_grupla(kalemler):
+            if tur == BASLIK:
+                row = copy.deepcopy(tpl.proto_baslik)
+                set_cell_lines(_tcs(row)[0], metin, bold=True)
+            elif tur == UYE:
+                row = dz.kompakt_satir(tpl.proto_uye, sol, metin, birlestirme, grid, duzen, set_cell_lines)
+            else:
+                row = copy.deepcopy(tpl.proto_tek)
+                set_cell_lines(_tcs(row)[0], metin)
+            yeni_satirlar.append((tur, row))
+    else:
+        for kind, text in kalemler:
+            if kind == BASLIK:
+                row = copy.deepcopy(tpl.proto_baslik)
+                set_cell_lines(_tcs(row)[0], text, bold=True)
+            elif kind == UYE:
+                row = copy.deepcopy(tpl.proto_uye)
+                set_cell_lines(_tcs(row)[0], text)
+            else:
+                row = copy.deepcopy(tpl.proto_tek)
+                set_cell_lines(_tcs(row)[0], text)
+            yeni_satirlar.append((kind, row))
+    for tur, row in yeni_satirlar:
+        if tur != BASLIK:
+            dz.satiri_kucult(row, duzen)
+        elif duzen.yazi is not None:
+            dz.yazi_boyutu_ayarla(row, max(duzen.yazi, 8))
         anchor.addnext(row)
         anchor = row
+    _oylama_bosluklarini_azalt(block, duzen.oylama_bosluk_azalt)
     for el in block:
         fixer.fix(el)
     return block
+
+
+def duzen_belirle(tpl: _Template, case: CaseData, zorla: Optional[str] = None):
+    """Davanın tek sayfaya sığması için kullanılacak düzeni seçer: (Duzen, sığıyor_mu)."""
+    ust = tpl.olculer.grid
+    ust_metinler = [(case.esas + "\n" + case.mahkeme, sum(ust[1:3]) if len(ust) >= 3 else 3399),
+                    (case.daire + "\n" + case.daire_karar, sum(ust[3:6]) if len(ust) >= 6 else 3719),
+                    (case.konu, ust[6] if len(ust) >= 7 else 1951)]
+    return dz.duzen_sec(tpl.olculer, parse_alt_bolum(case.alt_bolum), ust_metinler, zorla)
 
 
 def _add_page_break(p):
@@ -294,7 +372,11 @@ def _new_page_break_paragraph():
 
 
 def build_gundem(template_path: str, cases: Sequence[CaseData], tarih: dt.date,
-                 output_path: str, tetkik_hakimi: str = "") -> None:
+                 output_path: str, tetkik_hakimi: str = "", duzen: str = "otomatik") -> List[Tuple[str, bool]]:
+    """Gündemi oluşturur. Her dava için (kullanılan düzen adı, tek sayfaya sığıyor_mu) döndürür.
+
+    duzen: 'otomatik' (sığana kadar sıkıştır) ya da duzen.KADEMELER içindeki bir ad.
+    """
     if not cases:
         raise ValueError("En az bir dosya gerekli.")
     tpl = _Template(template_path)
@@ -312,6 +394,7 @@ def build_gundem(template_path: str, cases: Sequence[CaseData], tarih: dt.date,
         page_head = []
 
     built: List = []
+    secimler: List[Tuple[str, bool]] = []
     for i, case in enumerate(cases):
         if i > 0:
             # Sayfa sonunu önceki bloğun son paragrafına ekle; yoksa yeni paragraf
@@ -324,7 +407,9 @@ def build_gundem(template_path: str, cases: Sequence[CaseData], tarih: dt.date,
             for el in head:
                 fixer.fix(el)
             built.extend(head)
-        built.extend(_build_case(tpl, case, fixer))
+        secim, sigiyor = duzen_belirle(tpl, case, None if duzen == "otomatik" else duzen)
+        secimler.append((secim.ad, sigiyor))
+        built.extend(_build_case(tpl, case, fixer, secim))
     for el in tpl.case_block:
         tpl.body.remove(el)
     for el in built:
@@ -337,3 +422,4 @@ def build_gundem(template_path: str, cases: Sequence[CaseData], tarih: dt.date,
     cp.author = ""
     cp.last_modified_by = ""
     tpl.document.save(output_path)
+    return secimler
