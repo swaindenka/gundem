@@ -225,15 +225,198 @@ def extract_header(doc: Document) -> Dict[str, str]:
 
 
 # --------------------------------------------------------------------------
-# Alt bölüm (******* işaretinden sonrası)
+# Alt bölüm (******* işaretinden sonrası): hakim bilgileri
 # --------------------------------------------------------------------------
+# Alt bölüm satır türleri
+BASLIK = "baslik"   # "İlk BAM kararını veren ... hakimleri:" (tam genişlik satır)
+UYE = "uye"         # "BAŞKAN : Ad Soyad (sicil)" (değerlendirme kutulu satır)
+TEK = "tek"         # "İlk kararı veren ilk derece mahkemesi ... hakimi Ad Soyad" (değerlendirme kutulu satır)
+
+
 def _is_star_line(line: str) -> bool:
     s = line.replace(" ", "").replace("\t", "")
     return len(s) >= 3 and set(s) <= set("*")
 
 
-_STRONG_START = re.compile(r"KARARI(NI)?\s+VEREN")
-_HAKIM_WORD = re.compile(r"HAKIMI\b|HAKIMLERI\b")
+_STRONG_START = re.compile(r"KARARI(NI)?\s+VEREN|HUKMU\s+VEREN")
+_HAKIMI = re.compile(r"HAKIMI(?![A-Z])")
+_HAKIMLERI = re.compile(r"HAKIMLERI(?![A-Z])")
+_TETKIK = re.compile(r"TETKIK\s+HAKIM")
+
+# Görev adları (norm() uygulanmış metin üzerinde). Uzun olanlar önce denenir.
+_ROL = (r"(?:KIDEMLI\s+UYE|BASKAN\s*VEKILI|BASKAN\s*V\.?(?![A-Z])|DAIRE\s+BASKANI|UYE\s+HAKIM"
+        r"|BASKAN|UYE|HAKIM|REIS)")
+_ROL_BAS = re.compile(r"^(%s)(?![A-Z])\s*[:\-–]?\s*" % _ROL)
+_ROL_ICINDE = re.compile(r"(?<![A-Z])(%s)(?![A-Z])" % _ROL)
+_MADDE = re.compile(r"^\s*(?:[-–•*·]+|\d{1,2}\s*[.)\-–]|[A-Za-z]\))\s*")
+_SICIL = re.compile(r"(?:SICIL(?:\s*NO)?\s*[:.]?\s*)?\(?\s*(\d{3,})\s*\)?")
+_SICIL_TEK = re.compile(r"^(?:SICIL(?:\s*NO)?\s*[:.]?\s*)?\(?\s*\d{3,}\s*\)?$")
+_DEGERLENDIRME = {"COK", "IYI", "ORTA", "ZAYIF", "NOTSUZ", "ACIKLAMA", "PUAN", "NOT"}
+
+
+def _rol_etiketi(n_rol: str) -> str:
+    r = re.sub(r"\s+", " ", n_rol).strip().rstrip(".")
+    if r.startswith("KIDEMLI"):
+        return "KIDEMLİ ÜYE"
+    if r.replace(" ", "") == "BASKANVEKILI":
+        return "BAŞKANVEKİLİ"
+    if r in ("BASKAN V", "BASKANV"):
+        return "BAŞKAN V."
+    if r == "DAIRE BASKANI":
+        return "DAİRE BAŞKANI"
+    return {"BASKAN": "BAŞKAN", "UYE": "ÜYE", "UYE HAKIM": "ÜYE", "HAKIM": "HAKİM", "REIS": "REİS"}.get(r, r)
+
+
+def degerlendirme_mi(text: str) -> bool:
+    """Şablondaki 'Çok iyi / İyi / Orta / Zayıf / Notsuz / AÇIKLAMA:' kutusu metni mi?"""
+    kelimeler = re.findall(r"[A-Z]+", norm(text))
+    return bool(kelimeler) and all(k in _DEGERLENDIRME for k in kelimeler)
+
+
+def _hazirla(line: str) -> str:
+    line = line.replace("̇", "").replace("ß", "ss").replace("\t", " ")
+    line = _MADDE.sub("", line, count=1) if _MADDE.match(line) and not _SICIL_TEK.match(norm(line.strip())) else line
+    return re.sub(r"\s+", " ", line).strip()
+
+
+def _isim_sicil(rest: str) -> Tuple[str, str, str]:
+    """'Ad Soyad (12345)' / 'Ad Soyad 12345' / 'Ad Soyad Sicil No: 12345' -> (isim, sicil, ek)."""
+    rest = rest.strip()
+    n = norm(rest)
+    son = None
+    for m in _SICIL.finditer(n):
+        son = m
+    if son is None:
+        return _temizle_isim(rest), "", ""
+    isim = _temizle_isim(rest[:son.start()])
+    ek = rest[son.end():].strip(" -–,;:/")
+    return isim, son.group(1), ek
+
+
+def _temizle_isim(t: str) -> str:
+    t = re.sub(r"\(\s*\)", " ", t)
+    t = re.sub(r"\s+", " ", t)
+    return t.strip(" -–,;:/(")
+
+
+def _isim_gibi(line: str) -> bool:
+    """'Ad SOYAD', 'Mehmet Ali Yılmaz 12345' gibi kısa, büyük harfle başlayan sözcüklerden oluşan satır."""
+    t = line.strip()
+    if not t or len(t) > 70:
+        return False
+    t = re.sub(r"\(?\s*\d{3,}\s*\)?", " ", t)
+    t = re.sub(r"(?i)sicil\s*(no)?\s*[:.]?", " ", t)
+    words = re.findall(r"[^\s\-–,;:/()]+", t)
+    if not 2 <= len(words) <= 6:
+        return False
+    return all(w[0].isupper() for w in words) and all(any(c.isalpha() for c in w) for w in words)
+
+
+def _uye_metni(rol: str, isim: str, sicil: str, ek: str = "") -> str:
+    t = "%s\t: %s" % (rol, isim)
+    if sicil:
+        t += "  (%s)" % sicil
+    if ek:
+        t += " " + ek
+    return t
+
+
+class _Kalem:
+    def __init__(self, tur: str, metin: str = "", rol: str = "", isim: str = "", sicil: str = "", ek: str = ""):
+        self.tur, self.metin, self.rol, self.isim, self.sicil, self.ek = tur, metin, rol, isim, sicil, ek
+
+    def bitti_mi(self) -> bool:
+        return bool(self.isim)
+
+    def metne(self) -> str:
+        if self.tur == UYE:
+            return _uye_metni(self.rol, self.isim, self.sicil, self.ek)
+        return self.metin
+
+
+def _uye_ayristir(line: str) -> Optional[_Kalem]:
+    """Görev içeren satırı (BAŞKAN : Ad Soyad 123 / Ad Soyad (Üye) 123) ayrıştırır."""
+    n = norm(line)
+    if _STRONG_START.search(n) or _HAKIMLERI.search(n) or _TETKIK.search(n):
+        return None
+    m = _ROL_BAS.match(n)
+    if m:
+        rol = _rol_etiketi(m.group(1))
+        isim, sicil, ek = _isim_sicil(line[m.end():])
+        return _Kalem(UYE, rol=rol, isim=isim, sicil=sicil, ek=ek)
+    if len(line) <= 90:
+        m = _ROL_ICINDE.search(n)
+        if m:
+            kalan = line[:m.start()] + " " + line[m.end():]
+            if _isim_gibi(_temizle_isim(kalan)) or _SICIL.search(norm(kalan)):
+                isim, sicil, ek = _isim_sicil(kalan)
+                if isim:
+                    return _Kalem(UYE, rol=_rol_etiketi(m.group(1)), isim=isim, sicil=sicil, ek=ek)
+    return None
+
+
+def _kalemler(lines: List[str]) -> List[_Kalem]:
+    kalemler: List[_Kalem] = []
+    for raw in lines:
+        line = _hazirla(raw)
+        if not line or line.strip(" :-–.") == "" or _is_star_line(line) or degerlendirme_mi(line):
+            continue
+        n = norm(line)
+        son = kalemler[-1] if kalemler else None
+
+        uye = _uye_ayristir(line)
+        if uye is not None:
+            kalemler.append(uye)
+            continue
+        if _SICIL_TEK.match(n):
+            # Ayrı satırdaki sicil numarası: önceki hakime ekle
+            sicil = re.search(r"\d{3,}", n).group(0)
+            if son is not None and son.tur == UYE and not son.sicil:
+                son.sicil = sicil
+            elif son is not None and son.tur == TEK:
+                son.metin += " " + sicil
+            continue
+        if son is not None and son.tur == UYE and not son.isim and _isim_gibi(line):
+            son.isim, son.sicil, son.ek = _isim_sicil(line)
+            continue
+        if (son is not None and son.tur == TEK and re.search(r"HAKIMI\s*:?$", norm(son.metin))
+                and _isim_gibi(line)):
+            son.metin = son.metin.rstrip(" :") + " " + line
+            continue
+        if line.endswith(":") or _HAKIMLERI.search(n):
+            kalemler.append(_Kalem(BASLIK, metin=line))
+        else:
+            kalemler.append(_Kalem(TEK, metin=line))
+    # Hakim adı içermeyen ve ardından üye satırları gelen satır bir başlıktır
+    for i, k in enumerate(kalemler[:-1]):
+        if k.tur == TEK and not _HAKIMI.search(norm(k.metin)) and kalemler[i + 1].tur == UYE:
+            k.tur = BASLIK
+    return kalemler
+
+
+def parse_alt_bolum(text: str) -> List[Tuple[str, str]]:
+    return [(k.tur, k.metne()) for k in _kalemler(text.split("\n"))]
+
+
+def _hakim_iceriyor(kalemler: List[_Kalem], siki: bool = False) -> bool:
+    """Kalemlerde gerçekten hakim bilgisi var mı?
+
+    siki=True (belge gövdesinde arama yaparken): isimli üye satırı ya da '... hakimi Ad Soyad'
+    biçiminde isim içeren satır gerekir; 'mahkeme hakimi gerekçesinde ...' gibi cümleler sayılmaz.
+    """
+    for k in kalemler:
+        if k.tur == UYE and k.isim:
+            return True
+        n = norm(k.metin)
+        m = _HAKIMI.search(n)
+        if k.tur == TEK and m:
+            if not siki:
+                return True
+            if _isim_gibi(k.metin[m.end():]):
+                return True
+        if not siki and k.tur == BASLIK and (_HAKIMLERI.search(n) or _STRONG_START.search(n)):
+            return True
+    return False
 
 
 def _clean_lines(lines: List[str]) -> List[str]:
@@ -241,59 +424,63 @@ def _clean_lines(lines: List[str]) -> List[str]:
     return [re.sub(r"[ ]{2,}", "  ", l) for l in out if l]
 
 
-def _is_judge_line(n: str) -> bool:
-    return bool(_MEMBER_RE.match(n) or _STRONG_START.search(n) or _HAKIM_WORD.search(n))
+def _hakim_satiri_mi(line: str) -> bool:
+    n = norm(line)
+    return bool(_STRONG_START.search(n) or _HAKIMLERI.search(n) or _HAKIMI.search(n)
+                or _uye_ayristir(_hazirla(line)) is not None or _ROL_BAS.match(norm(_hazirla(line))))
 
 
 def _judge_blocks(lines: List[str]) -> List[List[str]]:
-    """Metindeki ardışık hakim satırı bloklarını bulur.
-
-    Blok, 'kararı veren' ya da 'BAŞKAN/ÜYE' satırıyla başlar; hakim satırları sürdükçe devam eder.
-    '... hakimi' ile biten satırdan sonra gelen tek satırlık isim de bloğa dahil edilir.
-    """
+    """Belge gövdesindeki ardışık hakim satırı bloklarını bulur (Emsal sonrası / genel arama için)."""
     blocks: List[List[str]] = []
     i, n = 0, len(lines)
     while i < n:
-        nl = norm(lines[i])
-        if not (_STRONG_START.search(nl) or _MEMBER_RE.match(nl)) or _is_star_line(lines[i]):
+        if _is_star_line(lines[i]) or not _hakim_satiri_mi(lines[i]):
             i += 1
             continue
         j = i
         block: List[str] = []
         while j < n and not _is_star_line(lines[j]):
-            nj = norm(lines[j])
-            if _is_judge_line(nj):
-                block.append(lines[j])
-            elif block and re.search(r"HAKIMI\s*:?$", norm(block[-1])) and len(lines[j]) <= 80:
-                block.append(lines[j])  # ayrı satırdaki ilk derece hakimi adı
+            l = lines[j]
+            h = _hazirla(l)
+            if (_hakim_satiri_mi(l) or _isim_gibi(h) or _SICIL_TEK.match(norm(h)) or degerlendirme_mi(h)
+                    or not h.strip(" :-–.")):
+                block.append(l)
+                j += 1
             else:
                 break
-            j += 1
-        has_judge = any(_MEMBER_RE.match(norm(l)) or _HAKIM_WORD.search(norm(l)) for l in block)
-        if has_judge:
+        if _hakim_iceriyor(_kalemler(block), siki=True):
             blocks.append(block)
         i = max(j, i + 1)
     return blocks
 
 
+def _tetkikte_kes(section: List[str]) -> List[str]:
+    """Hakim listesinin altındaki 'Tetkik Hakimi ...' imzasını ve sonrasını atar."""
+    for i, l in enumerate(section):
+        if _TETKIK.search(norm(l)):
+            return section[:i]
+    return section
+
+
 def find_alt_bolum(doc: Document) -> Tuple[str, str]:
     """Hakim bilgilerini bulur. (metin, kaynak) döndürür; kaynak: yildiz / emsal / genel / ''.
 
-    1. '*******' işaretinin altı (hakim satırı içeriyorsa)
+    1. '*******' işaretinin altı (hakim bilgisi içeriyorsa)
     2. Yoksa 'Emsal' bölümünden sonra gelen hakim satırları
     3. Yoksa belgedeki son hakim satırı bloğu
     """
-    lines = _clean_lines(doc.lines())
+    lines = _clean_lines(doc.lines(satir_bazli=True, atla=degerlendirme_mi))
     stars = [i for i, l in enumerate(lines) if _is_star_line(l)]
     fallback: Optional[List[str]] = None
     for idx in reversed(stars):
         end = next((j for j in stars if j > idx), len(lines))
-        section = lines[idx + 1:end]
+        section = _tetkikte_kes(lines[idx + 1:end])
         if not section:
             continue
         if fallback is None:
             fallback = section
-        if _judge_blocks(section):
+        if _hakim_iceriyor(_kalemler(section)):
             return "\n".join(section), "yildiz"
 
     emsal = [i for i, l in enumerate(lines) if "EMSAL" in norm(l)]
@@ -310,47 +497,13 @@ def find_alt_bolum(doc: Document) -> Tuple[str, str]:
     return "", ""
 
 
+def alt_bolum_duzenle(text: str) -> str:
+    """Ham hakim satırlarını tabloya yazılacak biçime getirir (tekrar uygulanabilir)."""
+    return "\n".join(t for _, t in parse_alt_bolum(text))
+
+
 def extract_alt_bolum(doc: Document) -> str:
     return find_alt_bolum(doc)[0]
-
-
-# Alt bölüm satır türleri
-BASLIK = "baslik"   # "İlk BAM kararını veren ... hakimleri:" (tam genişlik satır)
-UYE = "uye"         # "BAŞKAN : Ad Soyad (sicil)" (değerlendirme kutulu satır)
-TEK = "tek"         # "İlk kararı veren ilk derece mahkemesi ... hakimi Ad Soyad" (değerlendirme kutulu satır)
-
-_MEMBER_RE = re.compile(
-    r"^\s*((?:KIDEMLI\s+)?(?:BASKAN(?:\s*V(?:EKILI)?\.?)?|UYE|HAKIM|KATIP))\b\s*[:\-]?\s*(.*)$"
-)
-
-
-def parse_alt_bolum(text: str) -> List[Tuple[str, str]]:
-    raw = [l.strip() for l in text.split("\n") if l.strip()]
-    items: List[Tuple[str, str]] = []
-    i = 0
-    while i < len(raw):
-        line = raw[i]
-        n = norm(line)
-        m = _MEMBER_RE.match(n)
-        if m:
-            label_len = len(m.group(1))
-            label = tr_upper(line[:label_len].strip())
-            rest = line[label_len:].strip().lstrip(":-").strip()
-            rest = re.sub(r"\s+", " ", rest)
-            items.append((UYE, "%s\t: %s" % (label, rest)))
-        elif line.rstrip().endswith(":") or "HAKIMLERI" in n:
-            items.append((BASLIK, re.sub(r"\s+", " ", line)))
-        else:
-            text_line = re.sub(r"\s+", " ", line)
-            # "... hakimi" ile biten satırdan sonra isim ayrı satırdaysa birleştir
-            if re.search(r"HAKIMI\s*:?$", n) and i + 1 < len(raw):
-                nxt = norm(raw[i + 1])
-                if not _MEMBER_RE.match(nxt) and not raw[i + 1].rstrip().endswith(":") and "HAKIMLERI" not in nxt:
-                    text_line = text_line.rstrip(":").rstrip() + " " + re.sub(r"\s+", " ", raw[i + 1])
-                    i += 1
-            items.append((TEK, text_line))
-        i += 1
-    return items
 
 
 # --------------------------------------------------------------------------
@@ -380,7 +533,10 @@ def extract_case(doc: Document, kaynak: str = "") -> CaseData:
     data.daire = h.get("daire", "")
     data.daire_karar = h.get("daire_karar", "")
     data.konu = h.get("konu", "")
-    data.alt_bolum, data.alt_kaynak = find_alt_bolum(doc)
+    ham, data.alt_kaynak = find_alt_bolum(doc)
+    # Kutuda tabloya yazılacak düzenlenmiş hali gösterilir (BAŞKAN : Ad Soyad  (sicil));
+    # böylece görev/isim/sicil doğru ayrıldı mı kullanıcı kaydetmeden görebilir.
+    data.alt_bolum = alt_bolum_duzenle(ham)
     data.uyarilar = uyarilari_hesapla(data)
     return data
 
