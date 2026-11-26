@@ -50,6 +50,14 @@ Program hakim satırlarını şablondaki biçime getirir: `BAŞKAN : Ad Soyad  (
 - Görev, isim ve sicil ayrı satırlarda ya da **tablo hücrelerinde** (`BAŞKAN | : | Ad Soyad | 12345`)
 - Görevler bir sütunda alt alta, isimler ve siciller yan sütunlarda
 - Görevler: BAŞKAN, BAŞKAN V., BAŞKANVEKİLİ, KIDEMLİ ÜYE, ÜYE, HAKİM
+- "Kararını veren hâkim" satırları: `Direnme Kararını Veren İlk Derece Hâkimi; Ad Soyad sicil:3111547,`,
+  `Yetkisizlik kararını veren hâkim: Ad Soyad-1234567`, `İkinci ve direnme kararını veren hakim : Ad Soyad 1234567`
+  (her biri değerlendirme kutulu tek satır)
+- Görev yazılmamış hakimler: `... Hâkimleri;` başlığının altında `Ad Soyad sicil:1234567,` satırları
+  ya da tek satırda virgülle / "ve" ile ayrılmış birden çok hakim (`A sicil:1, B sicil:2 ve C sicil:3.`);
+  başlıkla aynı satırda olsalar da ayrılır
+- İmza tablosu düzeni: hakimler tabloda yan yana (`Başkan / Ad Soyad / sicil` hücreleri) ya da
+  görevler, isimler ve siciller ayrı tablo satırlarında
 
 Hakim isimleri ve sicilleri belgenin **son sayfalarında** yer aldığından, belgede birden çok aday
 varsa (ör. metnin ortasında alıntılanan eski bir kararın hakimleri, ortadaki bir `***` ayracı)

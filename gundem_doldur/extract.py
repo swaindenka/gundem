@@ -266,13 +266,20 @@ def _yildizlari_ayir(lines: List[str]) -> List[str]:
 _STRONG_START = re.compile(r"KARARI(NI)?\s+VEREN|HUKMU\s+VEREN")
 _HAKIMI = re.compile(r"HAKIMI(?![A-Z])")
 _HAKIMLERI = re.compile(r"HAKIMLERI(?![A-Z])")
+_HAKIM_KELIME = re.compile(r"(?<![A-Z])HAKIM(?:I|LERI)?(?![A-Z])")
+# Sicil olabilecek sayı: tarihin (13.12.2024) ya da esas numarasının (2024/10) parçası değil
+_SICIL_SAYI = re.compile(r"(?<![\d./])\d{3,}(?![\d./])")
+# Bir satırdaki hakimleri ayıran işaretler: sicilden sonra gelen virgül, noktalı virgül, sekme, 've'
+_BOLUCU = re.compile(r"(?<=[\d)])\s*(?:[,;\t]|\s+(?:ve|Ve|VE|ile|İle|İLE)\s+)\s*")
 _TETKIK = re.compile(r"TETKIK\s+HAKIM")
 
 # Görev adları (norm() uygulanmış metin üzerinde). Uzun olanlar önce denenir.
 _ROL = (r"(?:KIDEMLI\s+UYE|BASKAN\s*VEKILI|BASKAN\s*V\.?(?![A-Z])|DAIRE\s+BASKANI|UYE\s+HAKIM"
         r"|BASKAN|UYE|HAKIM|REIS)")
 _ROL_BAS = re.compile(r"^(%s)(?![A-Z])\s*[:\-–]?\s*" % _ROL)
-_ROL_ICINDE = re.compile(r"(?<![A-Z])(%s)(?![A-Z])" % _ROL)
+# İsmin içinde/sonunda geçen görev (soyadı 'Reis' / 'Hakim' olanlarla karışmasın diye yalnızca bunlar)
+_ROL_ICINDE = re.compile(r"(?<![A-Z])(KIDEMLI\s+UYE|BASKAN\s*VEKILI|BASKAN\s*V\.?(?![A-Z])|BASKAN|UYE)(?![A-Z])")
+_ROL_TAM = re.compile(r"^(%s)(?![A-Z])\s*[.:]?$" % _ROL)
 _MADDE = re.compile(r"^\s*(?:[-–•*·]+|\d{1,2}\s*[.)\-–]|[A-Za-z]\))\s*")
 _SICIL = re.compile(r"(?:SICIL(?:\s*NO)?\s*[:.]?\s*)?\(?\s*(\d{3,})\s*\)?")
 _SICIL_TEK = re.compile(r"^(?:SICIL(?:\s*NO)?\s*[:.]?\s*)?\(?\s*\d{3,}\s*\)?$")
@@ -314,7 +321,7 @@ def _isim_sicil(rest: str) -> Tuple[str, str, str]:
     if son is None:
         return _temizle_isim(rest), "", ""
     isim = _temizle_isim(rest[:son.start()])
-    ek = rest[son.end():].strip(" -–,;:/")
+    ek = rest[son.end():].strip(" -–,;:/.")
     return isim, son.group(1), ek
 
 
@@ -326,19 +333,19 @@ def _temizle_isim(t: str) -> str:
 
 def _isim_gibi(line: str) -> bool:
     """'Ad SOYAD', 'Mehmet Ali Yılmaz 12345' gibi kısa, büyük harfle başlayan sözcüklerden oluşan satır."""
-    t = line.strip()
+    t = line.strip().rstrip(" .,;")
     if not t or len(t) > 70:
         return False
     t = re.sub(r"\(?\s*\d{3,}\s*\)?", " ", t)
     t = re.sub(r"(?i)sicil\s*(no)?\s*[:.]?", " ", t)
-    words = re.findall(r"[^\s\-–,;:/()]+", t)
+    words = [w for w in re.findall(r"[^\s\-–,;:/()]+", t) if w.strip(".")]
     if not 2 <= len(words) <= 6:
         return False
     return all(w[0].isupper() for w in words) and all(any(c.isalpha() for c in w) for w in words)
 
 
 def _uye_metni(rol: str, isim: str, sicil: str, ek: str = "") -> str:
-    t = "%s\t: %s" % (rol, isim)
+    t = "%s\t: %s" % (rol, isim) if rol else isim
     if sicil:
         t += "  (%s)" % sicil
     if ek:
@@ -380,11 +387,78 @@ def _uye_ayristir(line: str) -> Optional[_Kalem]:
     return None
 
 
+def _transpoze(lines: List[str]) -> List[str]:
+    """İmza tablosu düzeni: 'Başkan | Üye | Üye' satırı, altında isimler ve siciller aynı sütunlarda.
+
+    Sütunlar hakimdir; her sütun tek satıra çevrilir: 'Başkan Ali Veli 12345'.
+    """
+    out: List[str] = []
+    i = 0
+    while i < len(lines):
+        parts = [p.strip() for p in lines[i].split("\t")]
+        if len(parts) >= 2 and all(p and _ROL_TAM.match(norm(p)) for p in parts):
+            cols = [[p] for p in parts]
+            j = i + 1
+            while j < len(lines) and j <= i + 3:
+                ps = [p.strip() for p in lines[j].split("\t")]
+                if len(ps) != len(parts):
+                    break
+                for c, p in zip(cols, ps):
+                    c.append(p)
+                j += 1
+            if j > i + 1:
+                out.extend(" ".join(x for x in c if x) for c in cols)
+                i = j
+                continue
+        out.append(lines[i])
+        i += 1
+    return out
+
+
+def _parcala(raw: str) -> List[str]:
+    """Bir satırdaki birden çok hakimi ayrı satırlara böler.
+
+    '... Hâkimleri; A sicil:1, B sicil:2'  -> ['... Hâkimleri;', 'A sicil:1', 'B sicil:2']
+    'A sicil:1, B sicil:2 ve C sicil:3'    -> ['A sicil:1', 'B sicil:2', 'C sicil:3']
+    'A sicil:1 <sekme> B sicil:2' (tablo)  -> ['A sicil:1', 'B sicil:2']
+    """
+    line = raw.strip()
+    out: List[str] = []
+    m = re.search(r"HAKIMLERI\s*[;:,\-–]?\s*", norm(line))
+    if m and line[m.end():].strip():
+        kalan = line[m.end():].strip()
+        if _SICIL_SAYI.search(norm(kalan)) or _isim_gibi(_hazirla(kalan)) or _ROL_BAS.match(norm(kalan)):
+            out.append(line[:m.end()].rstrip())
+            line = kalan
+    if len(_SICIL_SAYI.findall(norm(line))) >= 2:
+        parcalar = [p.strip(" ,;.\t") for p in _BOLUCU.split(line)]
+        parcalar = [p for p in parcalar if p]
+        if len(parcalar) >= 2:
+            return out + parcalar
+    return out + [line]
+
+
+def _isim_sicil_var_mi(metin: str) -> bool:
+    """'... hâkimi: Ad Soyad 123' / '... hâkim; Ad Soyad' gibi satırda hakim kelimesinden sonra isim ya da sicil var mı?"""
+    n = norm(metin)
+    son = None
+    for m in _HAKIM_KELIME.finditer(n):
+        son = m
+    kuyruk = metin[son.end():] if son is not None else metin
+    kuyruk = kuyruk.strip(" :;,-–")
+    if _SICIL_SAYI.search(norm(kuyruk)):
+        return True
+    return _isim_gibi(_hazirla(re.split(r"[,;]", kuyruk)[0])) if kuyruk else False
+
+
 def _kalemler(lines: List[str]) -> List[_Kalem]:
+    satirlar: List[str] = []
+    for raw in _transpoze(list(lines)):
+        satirlar.extend(_parcala(raw))
     kalemler: List[_Kalem] = []
-    for raw in lines:
+    for raw in satirlar:
         line = _hazirla(raw)
-        if not line or line.strip(" :-–.") == "" or _is_star_line(line) or degerlendirme_mi(line):
+        if not line or line.strip(" :-–.;,") == "" or _is_star_line(line) or degerlendirme_mi(line):
             continue
         n = norm(line)
         son = kalemler[-1] if kalemler else None
@@ -393,7 +467,7 @@ def _kalemler(lines: List[str]) -> List[_Kalem]:
         if uye is not None:
             kalemler.append(uye)
             continue
-        if _SICIL_TEK.match(n):
+        if _SICIL_TEK.match(n.strip(" ,;.")):
             # Ayrı satırdaki sicil numarası: önceki hakime ekle
             sicil = re.search(r"\d{3,}", n).group(0)
             if son is not None and son.tur == UYE and not son.sicil:
@@ -402,19 +476,32 @@ def _kalemler(lines: List[str]) -> List[_Kalem]:
                 son.metin += " " + sicil
             continue
         if son is not None and son.tur == UYE and not son.isim and _isim_gibi(line):
-            son.isim, son.sicil, son.ek = _isim_sicil(line)
+            son.isim, son.sicil, son.ek = _isim_sicil(line.rstrip(" ,;."))
             continue
-        if (son is not None and son.tur == TEK and re.search(r"HAKIMI\s*:?$", norm(son.metin))
+        if (son is not None and son.tur == TEK and re.search(r"HAKIMI?\s*[:;,]?$", norm(son.metin))
                 and _isim_gibi(line)):
-            son.metin = son.metin.rstrip(" :") + " " + line
+            son.metin = son.metin.rstrip(" :;,") + " " + line.rstrip(" ,;.")
             continue
-        if line.endswith(":") or _HAKIMLERI.search(n):
-            kalemler.append(_Kalem(BASLIK, metin=line))
-        else:
-            kalemler.append(_Kalem(TEK, metin=line))
+        if _HAKIMLERI.search(n) or (line.endswith((":", ";")) and not _SICIL_SAYI.search(n)):
+            # '... Hâkimleri;' -> '... Hâkimleri:' (şablondaki gibi)
+            kalemler.append(_Kalem(BASLIK, metin=re.sub(r"\s*[;,]$", ":", line)))
+            continue
+        if _STRONG_START.search(n) or _HAKIM_KELIME.search(n):
+            # 'Yetkisizlik kararını veren hâkim: Ad Soyad-12345' (tek hakim)
+            kalemler.append(_Kalem(TEK, metin=line.rstrip(" ,;")))
+            continue
+        if _isim_gibi(line):
+            isim, sicil, ek = _isim_sicil(line.rstrip(" ,;."))
+            liste_icinde = son is not None and son.tur in (BASLIK, UYE)
+            if isim and (sicil or liste_icinde):
+                # Görevi yazılmamış hakim: 'Ad Soyad sicil:12345'
+                kalemler.append(_Kalem(UYE, isim=isim, sicil=sicil, ek=ek))
+                continue
+        kalemler.append(_Kalem(TEK, metin=line))
     # Hakim adı içermeyen ve ardından üye satırları gelen satır bir başlıktır
     for i, k in enumerate(kalemler[:-1]):
-        if k.tur == TEK and not _HAKIMI.search(norm(k.metin)) and kalemler[i + 1].tur == UYE:
+        if (k.tur == TEK and kalemler[i + 1].tur == UYE
+                and not (_HAKIM_KELIME.search(norm(k.metin)) and _isim_sicil_var_mi(k.metin))):
             k.tur = BASLIK
     return kalemler
 
@@ -433,11 +520,10 @@ def _hakim_iceriyor(kalemler: List[_Kalem], siki: bool = False) -> bool:
         if k.tur == UYE and k.isim:
             return True
         n = norm(k.metin)
-        m = _HAKIMI.search(n)
-        if k.tur == TEK and m:
-            if not siki:
+        if k.tur == TEK and (_STRONG_START.search(n) or _HAKIM_KELIME.search(n)):
+            if _isim_sicil_var_mi(k.metin):
                 return True
-            if _isim_gibi(k.metin[m.end():]):
+            if not siki and _STRONG_START.search(n):
                 return True
         if not siki and k.tur == BASLIK and (_HAKIMLERI.search(n) or _STRONG_START.search(n)):
             return True
@@ -453,8 +539,20 @@ def _hakim_satiri_mi(line: str) -> bool:
     n = norm(line)
     if _TETKIK.search(n):
         return False  # raporu yazan tetkik hakiminin imzası hakim listesine dahil değildir
-    return bool(_STRONG_START.search(n) or _HAKIMLERI.search(n) or _HAKIMI.search(n)
-                or _uye_ayristir(_hazirla(line)) is not None or _ROL_BAS.match(norm(_hazirla(line))))
+    if _STRONG_START.search(n) or _HAKIM_KELIME.search(n) or re.search(r"SICIL\s*(NO)?\s*[:.]?\s*\d", n):
+        return True
+    h = _hazirla(line)
+    return _uye_ayristir(h) is not None or bool(_ROL_BAS.match(norm(h)))
+
+
+def _devam_satiri_mi(line: str) -> bool:
+    """Hakim listesinin devamı olabilecek satır (isim, sicil, görev; birden çok hakim içerebilir)."""
+    for p in _parcala(line):
+        h = _hazirla(p)
+        if not (_hakim_satiri_mi(p) or _isim_gibi(h) or _SICIL_TEK.match(norm(h).strip(" ,;."))
+                or degerlendirme_mi(h) or not h.strip(" :-–.;,")):
+            return False
+    return True
 
 
 def _bloklar(lines: List[str], siki: bool = True) -> List[Tuple[int, int]]:
@@ -467,9 +565,7 @@ def _bloklar(lines: List[str], siki: bool = True) -> List[Tuple[int, int]]:
             continue
         j = i
         while j < n and not _is_star_line(lines[j]) and not _TETKIK.search(norm(lines[j])):
-            h = _hazirla(lines[j])
-            if (_hakim_satiri_mi(lines[j]) or _isim_gibi(h) or _SICIL_TEK.match(norm(h))
-                    or degerlendirme_mi(h) or not h.strip(" :-–.")):
+            if _devam_satiri_mi(lines[j]):
                 j += 1
             else:
                 break
