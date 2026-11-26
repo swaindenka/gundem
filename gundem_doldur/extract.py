@@ -305,9 +305,10 @@ def degerlendirme_mi(text: str) -> bool:
     return bool(kelimeler) and all(k in _DEGERLENDIRME for k in kelimeler)
 
 
-def _hazirla(line: str) -> str:
+def _hazirla(line: str, madde: bool = True) -> str:
     line = line.replace("̇", "").replace("ß", "ss").replace("\t", " ")
-    line = _MADDE.sub("", line, count=1) if _MADDE.match(line) and not _SICIL_TEK.match(norm(line.strip())) else line
+    if madde and _MADDE.match(line) and not _SICIL_TEK.match(norm(line.strip())):
+        line = _MADDE.sub("", line, count=1)
     return re.sub(r"\s+", " ", line).strip()
 
 
@@ -547,6 +548,8 @@ def _kalemler(lines: List[str]) -> List[_Kalem]:
     kalemler: List[_Kalem] = []
     for raw in satirlar:
         line = _hazirla(raw)
+        # başlık / tek hakim satırlarında baştaki numara ('1. Kararı Veren ...') korunur
+        tam = _hazirla(raw, madde=False)
         if not line or line.strip(" :-–.;,") == "" or _is_star_line(line) or degerlendirme_mi(line):
             continue
         n = norm(line)
@@ -573,11 +576,11 @@ def _kalemler(lines: List[str]) -> List[_Kalem]:
             continue
         if _HAKIMLERI.search(n) or (line.endswith((":", ";")) and not _SICIL_SAYI.search(n)):
             # '... Hâkimleri;' -> '... Hâkimleri:' (şablondaki gibi)
-            kalemler.append(_Kalem(BASLIK, metin=re.sub(r"[\s;:,]*$", "", line) + ":"))
+            kalemler.append(_Kalem(BASLIK, metin=re.sub(r"[\s;:,]*$", "", tam) + ":"))
             continue
         if _STRONG_START.search(n) or _HAKIM_KELIME.search(n):
             # 'Yetkisizlik kararını veren hâkim: Ad Soyad-12345' (tek hakim)
-            kalemler.append(_Kalem(TEK, metin=line.rstrip(" ,;")))
+            kalemler.append(_Kalem(TEK, metin=tam.rstrip(" ,;")))
             continue
         if _isim_gibi(line):
             isim, sicil, ek = _isim_sicil(line.rstrip(" ,;."))
@@ -586,7 +589,7 @@ def _kalemler(lines: List[str]) -> List[_Kalem]:
                 # Görevi yazılmamış hakim: 'Ad Soyad sicil:12345'
                 kalemler.append(_Kalem(UYE, isim=isim, sicil=sicil, ek=ek))
                 continue
-        kalemler.append(_Kalem(TEK, metin=line))
+        kalemler.append(_Kalem(TEK, metin=tam))
     # Hakim adı içermeyen ve ardından üye satırları gelen satır bir başlıktır
     for i, k in enumerate(kalemler[:-1]):
         if (k.tur == TEK and kalemler[i + 1].tur == UYE
