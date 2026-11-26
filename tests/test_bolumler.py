@@ -87,3 +87,9 @@ def test_dava_sonradan_bolum_ekleme_elle_duzeltmeyi_korur(tmp_path):
     assert dava.veri.alt_kaynak == "yildiz" and "Test9isim" in dava.veri.alt_bolum
     assert dava.etiket() == "2025-123 birinci bölüm.docx  [bölüm 1, 2, 3]"
     assert dava.dosyalar == yollar
+
+
+def test_dogal_siralama():
+    from gundem_doldur.bolumler import dogal_anahtar
+    adlar = ["dosya 10", "dosya 2", "dosya 1", "2025-12", "2025-3", "abc"]
+    assert sorted(adlar, key=dogal_anahtar) == ["2025-3", "2025-12", "abc", "dosya 1", "dosya 2", "dosya 10"]
