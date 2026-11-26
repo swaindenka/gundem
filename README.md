@@ -21,7 +21,9 @@ Kaynak Word belgelerindeki bilgileri okuyup **gündem tablosunu** (`sablon/BASLI
    (ör. `2 ARALIK 2026 ÇARŞAMBA GÜNÜ GÜNDEMİ`).
 5. **Tetkik hakimi** kutusu isteğe bağlıdır; boş bırakılırsa gündemde boş kalır.
 6. **Gündemi Oluştur** ile `.docx` olarak kaydedin. Birden çok dosya eklediyseniz her biri
-   ayrı sayfada, sıra numarasıyla yer alır (sırayı ▲ ▼ ile değiştirebilirsiniz). Her sayfanın
+   ayrı sayfada yer alır. Sıra numaraları listedeki sıraya göre 1, 2, 3… diye otomatik verilir
+   (dosyalar adlarına göre doğal sırada eklenir: `dosya 2`, `dosya 10`'dan önce gelir); sırayı ▲ ▼ ile
+   değiştirdiğinizde ya da dosya kaldırdığınızda numaralar yeniden düzenlenir. Her sayfanın
    başında tarih ve tetkik hakimi başlığı tekrarlanır.
 
 ### Her dava tek sayfada

@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import List, Optional
 
 from . import __version__
-from .bolumler import Dava, Parca, bolum_bilgisi
+from .bolumler import Dava, Parca, bolum_bilgisi, dogal_anahtar
 from .extract import CaseData, extract_case, looks_complete, norm
 from .reader import read_document
 from .writer import AYLAR, build_gundem, gundem_basligi
@@ -188,7 +188,7 @@ class App(tk.Tk):
         def sirala(p):
             grup, no = bolum_bilgisi(p)
             ad = grup or norm(os.path.splitext(os.path.basename(p))[0]).lower()
-            return (ad, no or 0)
+            return (dogal_anahtar(ad), no or 0)
 
         def work():
             for p in sorted(paths, key=sirala):
@@ -238,12 +238,21 @@ class App(tk.Tk):
         else:
             case.uyarilar = logs + case.uyarilar
             dava = Dava.tek_dosya(case)
-        if not dava.veri.sira_no:
-            nums = [int(c.sira_no) for c in self.cases if c.sira_no.strip().isdigit()]
-            dava.veri.sira_no = str(max(nums) + 1 if nums else len(self.davalar) + 1)
         self.davalar.append(dava)
         self.liste.insert("end", self._liste_metni(dava))
+        self._yeniden_numarala()
         self._sec(len(self.davalar) - 1)
+
+    def _yeniden_numarala(self):
+        """Sıra numaralarını listedeki yere göre 1, 2, 3... olarak verir."""
+        for i, d in enumerate(self.davalar):
+            d.veri.sira_no = str(i + 1)
+            self.liste.delete(i)
+            self.liste.insert(i, self._liste_metni(d))
+        if self.current is not None and self.current < len(self.davalar):
+            w = self.widgets["sira_no"]
+            w.delete(0, "end")
+            w.insert(0, self.davalar[self.current].veri.sira_no)
 
     @staticmethod
     def _liste_metni(dava: Dava) -> str:
@@ -312,6 +321,7 @@ class App(tk.Tk):
         self.current = None
         del self.davalar[idx]
         self.liste.delete(idx)
+        self._yeniden_numarala()
         if self.davalar:
             self._sec(min(idx, len(self.davalar) - 1))
         else:
@@ -326,14 +336,9 @@ class App(tk.Tk):
         j = i + yon
         if not (0 <= j < len(self.davalar)):
             return
-        a, b = self.davalar[i], self.davalar[j]
-        # Sıra numaraları sırada kalsın: numaraları da değiş tokuş et
-        a.veri.sira_no, b.veri.sira_no = b.veri.sira_no, a.veri.sira_no
-        self.davalar[i], self.davalar[j] = b, a
-        for k in (i, j):
-            self.liste.delete(k)
-            self.liste.insert(k, self._liste_metni(self.davalar[k]))
+        self.davalar[i], self.davalar[j] = self.davalar[j], self.davalar[i]
         self.current = None
+        self._yeniden_numarala()
         self._sec(j)
 
     # ------------------------------------------------------------ Çıktı

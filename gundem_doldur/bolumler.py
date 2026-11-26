@@ -153,3 +153,8 @@ class Dava:
             nolar = ", ".join(str(p.no) for p in sorted(self.parcalar, key=lambda p: p.no))
             return "%s  [bölüm %s]" % (ad, nolar)
         return ad
+
+
+def dogal_anahtar(metin: str):
+    """'dosya 2' < 'dosya 10' olacak şekilde sayıları sayı olarak sıralayan anahtar."""
+    return [(0, int(p), "") if p.isdigit() else (1, 0, p) for p in re.split(r"(\d+)", metin) if p]
