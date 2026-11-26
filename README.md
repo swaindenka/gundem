@@ -56,6 +56,8 @@ Program hakim satırlarını şablondaki biçime getirir: `BAŞKAN : Ad Soyad  (
 - Görev yazılmamış hakimler: `... Hâkimleri;` başlığının altında `Ad Soyad sicil:1234567,` satırları
   ya da tek satırda virgülle / "ve" ile ayrılmış birden çok hakim (`A sicil:1, B sicil:2 ve C sicil:3.`);
   başlıkla aynı satırda olsalar da ayrılır
+- Başlık ile hakimler aynı satırda: `Direnme kararı veren Bölge Adliye Mah. Heyeti : Başkan : Ad Soyad (5555)`
+  → başlık satırı + `BAŞKAN : Ad Soyad  (5555)`; aynı satırdaki `Üye : ...` lar da ayrı satır olur
 - İmza tablosu düzeni: hakimler tabloda yan yana (`Başkan / Ad Soyad / sicil` hücreleri) ya da
   görevler, isimler ve siciller ayrı tablo satırlarında
 
