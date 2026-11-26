@@ -40,6 +40,20 @@ Bölüm ifadesi çıkarıldığında dosya adının geri kalanı aynı olan dosy
   elle düzelttiğiniz alanlar korunur.
 - Araya bir bölüm eksik kaldıysa (ör. 1. ve 3. eklendi, 2. yok) program uyarır.
 
+### Tanınan hakim yazımları
+
+Program hakim satırlarını şablondaki biçime getirir: `BAŞKAN : Ad Soyad  (sicil)`. Tanınan yazımlar:
+
+- `BAŞKAN : Ad Soyad (12345)`, `Başkan Ad Soyad 12345`, `1- Üye: Ad Soyad 12345`, `• ÜYE - Ad Soyad - 12345`
+- `Üye : Ad Soyad Sicil No: 12345`
+- Görev isimden sonra: `Ad Soyad (Başkan) 12345`, `Ad Soyad - Üye - 12345`
+- Görev, isim ve sicil ayrı satırlarda ya da **tablo hücrelerinde** (`BAŞKAN | : | Ad Soyad | 12345`)
+- Görevler bir sütunda alt alta, isimler ve siciller yan sütunlarda
+- Görevler: BAŞKAN, BAŞKAN V., BAŞKANVEKİLİ, KIDEMLİ ÜYE, ÜYE, HAKİM
+
+Yıldızın altındaki "Tetkik Hakimi ..." imzası hakim listesine alınmaz. Hakimler kutusunda
+düzenlenmiş hali görünür; görev / isim / sicil doğru ayrılmamışsa kaydetmeden önce düzeltebilirsiniz.
+
 ### Hakimler kutusu nasıl yorumlanır?
 
 Kutudaki her satır tabloda ayrı bir satır olur:

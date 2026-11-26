@@ -29,20 +29,38 @@ class ReadError(Exception):
 # --------------------------------------------------------------------------
 # .docx
 # --------------------------------------------------------------------------
+MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+_ATLA = {_q("delText"), _q("instrText"), _q("pPr"), _q("rPr"), MC_FALLBACK}
+
+
 def _para_text(p) -> str:
     parts: List[str] = []
-    for el in p.iter():
-        tag = el.tag
-        if tag == _q("t"):
-            parts.append(el.text or "")
-        elif tag == _q("tab"):
-            # w:tab paragraf özelliklerinde (sekme durakları) de geçer; yalnızca run içindekiler metindir
-            if el.getparent() is not None and el.getparent().tag == _q("r"):
+
+    def walk(el):
+        for child in el:
+            tag = child.tag
+            if not isinstance(tag, str) or tag in _ATLA:
+                # mc:Fallback: metin kutularının eski (VML) kopyası; okunursa metin iki kez gelir
+                continue
+            if tag == _q("t"):
+                parts.append(child.text or "")
+            elif tag == _q("tab"):
                 parts.append("\t")
-        elif tag in (_q("br"), _q("cr")):
-            parts.append("\n")
-        elif tag == _q("noBreakHyphen"):
-            parts.append("-")
+            elif tag in (_q("br"), _q("cr")):
+                parts.append("\n")
+            elif tag == _q("noBreakHyphen"):
+                parts.append("-")
+            elif tag == _q("txbxContent"):
+                # metin kutusu: içindeki paragrafları ayrı satır olarak ekle
+                for tp in child.iter(_q("p")):
+                    parts.append("\n" + _para_text(tp))
+                parts.append("\n")
+                continue
+            elif tag == _q("p"):
+                continue
+            walk(child)
+
+    walk(p)
     return "".join(parts).replace("\xa0", " ")
 
 

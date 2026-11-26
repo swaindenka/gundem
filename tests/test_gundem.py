@@ -27,7 +27,7 @@ def _kontrol_baslik_duzeni(case):
     assert case.konu == "Alacak davası"
     items = parse_alt_bolum(case.alt_bolum)
     assert [k for k, _ in items] == [TEK, BASLIK, UYE, UYE, UYE, BASLIK, UYE, UYE, UYE]
-    assert items[2][1] == "BAŞKAN\t: Test1isim Test1Soyisim (999898)"
+    assert items[2][1] == "BAŞKAN\t: Test1isim Test1Soyisim  (999898)"
 
 
 def test_docx_baslik_duzeni(tmp_path):
@@ -55,8 +55,8 @@ def test_etiket_duzeni(tmp_path, dosya):
     assert case.konu == "İşçilik alacağı"
     items = parse_alt_bolum(case.alt_bolum)
     assert items[0] == (TEK, "İlk kararı veren ilk derece mahkemesi (Ankara 3. İş Mahkemesi) hakimi Ali Veli 123456")
-    assert items[2] == (UYE, "BAŞKAN\t: Ayşe Yılmaz (111)")
-    assert items[3] == (UYE, "ÜYE\t: Mehmet Kaya (222)")
+    assert items[2] == (UYE, "BAŞKAN\t: Ayşe Yılmaz  (111)")
+    assert items[3] == (UYE, "ÜYE\t: Mehmet Kaya  (222)")
 
 
 def test_doc_karmasik_tablo():
