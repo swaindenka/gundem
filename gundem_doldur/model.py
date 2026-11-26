@@ -84,3 +84,21 @@ class Document:
             else:
                 out.extend(b.split("\n"))
         return out
+
+
+# Yıldız benzeri karakterler: '*' dışında Word'de "Simge Ekle" ile ya da farklı yazı
+# tiplerinden gelebilen yıldız / asterisk işaretleri.
+YILDIZLAR = "*∗＊⁎✱✲✳❋٭﹡★☆⋆✶✴✵✷✸✹✺✻✼✽❉❊✦✧"
+
+
+def sembol_karakteri(kod: int) -> str:
+    """Word 'Symbol' / 'Wingdings' simge kodunu (ör. F02A) metne çevirir.
+
+    Asterisk (0x2A) '*' olur; Wingdings yıldız aralığı '★' olur; diğerleri nesne işareti.
+    """
+    alt = kod & 0xFF
+    if alt == 0x2A:
+        return "*"
+    if 0xA9 <= alt <= 0xB5:
+        return "★"
+    return "￼"

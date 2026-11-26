@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 import olefile
 
-from .model import Cell, Document, Table
+from .model import Cell, Document, Table, sembol_karakteri
 
 # Paragraf özellikleri (sprm) kodları
 SPRM_P_FINTABLE = 0x2416
@@ -24,6 +24,7 @@ SPRM_P_FINNER_TABLE_CELL = 0x244B
 SPRM_P_FINNER_TTP = 0x244C
 SPRM_T_DEF_TABLE = 0xD608
 SPRM_P_CHG_TABS = 0xC615
+SPRM_C_SYMBOL = 0x6A09
 
 
 class DocReadError(Exception):
@@ -168,11 +169,14 @@ class _DocParser:
                 return 0, 0
             return struct.unpack_from("<II", wd, blob + index * 8)
 
+        self.fc_bte_chpx, self.lcb_bte_chpx = fclcb(12)
         self.fc_bte_papx, self.lcb_bte_papx = fclcb(13)
         self.fc_clx, self.lcb_clx = fclcb(33)
         self.pieces = self._read_pieces()
-        self._bte = self._read_bte()
+        self._bte = self._read_bte(self.fc_bte_papx, self.lcb_bte_papx)
+        self._bte_chp = self._read_bte(self.fc_bte_chpx, self.lcb_bte_chpx)
         self._fkp_cache: Dict[int, Tuple[List[int], List[bytes]]] = {}
+        self._chp_cache: Dict[int, Tuple[List[int], List[bytes]]] = {}
 
     # ----- Parça tablosu (piece table) -----
     def _read_pieces(self) -> List[_Piece]:
@@ -206,10 +210,10 @@ class _DocParser:
         return raw.decode("utf-16-le", errors="replace")
 
     # ----- Paragraf özellikleri -----
-    def _read_bte(self) -> Tuple[List[int], List[int]]:
-        if not self.lcb_bte_papx:
+    def _read_bte(self, fc: int, lcb: int) -> Tuple[List[int], List[int]]:
+        if not lcb:
             return [], []
-        data = self.tbl[self.fc_bte_papx:self.fc_bte_papx + self.lcb_bte_papx]
+        data = self.tbl[fc:fc + lcb]
         n = (len(data) - 4) // 8
         fcs = list(struct.unpack_from("<%dI" % (n + 1), data, 0))
         pns = [x & 0x3FFFFF for x in struct.unpack_from("<%dI" % n, data, 4 * (n + 1))]
@@ -238,6 +242,53 @@ class _DocParser:
             grpprls.append(body[2:])  # ilk 2 bayt: istd (stil)
         self._fkp_cache[pn] = (rgfc, grpprls)
         return rgfc, grpprls
+
+    def _chp_fkp(self, pn: int) -> Tuple[List[int], List[bytes]]:
+        if pn in self._chp_cache:
+            return self._chp_cache[pn]
+        page = self.wd[pn * 512:pn * 512 + 512]
+        crun = page[511]
+        rgfc = list(struct.unpack_from("<%dI" % (crun + 1), page, 0))
+        grpprls = []
+        base = 4 * (crun + 1)
+        for i in range(crun):
+            o = page[base + i] * 2
+            if o == 0:
+                grpprls.append(b"")
+                continue
+            cb = page[o]
+            grpprls.append(page[o + 1:o + 1 + cb])
+        self._chp_cache[pn] = (rgfc, grpprls)
+        return rgfc, grpprls
+
+    def symbol_at(self, fc: int) -> Optional[int]:
+        """Karakterin sprmCSymbol ile verilmiş simge kodu (varsa)."""
+        fcs, pns = self._bte_chp
+        if not pns:
+            return None
+        j = bisect_right(fcs, fc) - 1
+        if j < 0 or j >= len(pns):
+            return None
+        try:
+            rgfc, grpprls = self._chp_fkp(pns[j])
+        except struct.error:
+            return None
+        i = bisect_right(rgfc, fc) - 1
+        if not 0 <= i < len(grpprls):
+            return None
+        g = grpprls[i]
+        pos = 0
+        while pos + 2 <= len(g):
+            sprm = struct.unpack_from("<H", g, pos)[0]
+            pos += 2
+            try:
+                start, size = _operand_size(sprm, g, pos)
+            except (IndexError, struct.error):
+                return None
+            if sprm == SPRM_C_SYMBOL and size >= 4 and start + 4 <= len(g):
+                return struct.unpack_from("<H", g, start + 2)[0]
+            pos = start + size
+        return None
 
     def para_props(self, fc: int) -> _ParaProps:
         props = _ParaProps()
@@ -284,7 +335,13 @@ class _DocParser:
                     continue
                 if any(s == "instr" for s in field_stack):
                     continue
-                if ch in "\x0b\x0c":
+                if ch == "(":
+                    # 0x28 + sprmCSymbol: Ekle > Simge ile eklenmiş karakter
+                    kod = self.symbol_at(piece.fc + (k if piece.compressed else 2 * k))
+                    buf.append(sembol_karakteri(kod) if kod is not None else ch)
+                elif "\uf000" <= ch <= "\uf0ff":
+                    buf.append(sembol_karakteri(ord(ch)))
+                elif ch in "\x0b\x0c":
                     buf.append("\n")
                 elif ch == "\x1e":
                     buf.append("-")

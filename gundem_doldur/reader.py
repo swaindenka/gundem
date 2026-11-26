@@ -12,7 +12,7 @@ from typing import Callable, List, Optional
 
 from lxml import etree
 
-from .model import Cell, Document, Table
+from .model import Cell, Document, Table, sembol_karakteri
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W}
@@ -33,6 +33,13 @@ MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fall
 _ATLA = {_q("delText"), _q("instrText"), _q("pPr"), _q("rPr"), MC_FALLBACK}
 
 
+def _pua_cevir(t: str) -> str:
+    """Symbol yazı tipindeki karakterler U+F000-U+F0FF aralığında gelir; yıldızı '*' yap."""
+    if not any("\uf000" <= c <= "\uf0ff" for c in t):
+        return t
+    return "".join(sembol_karakteri(ord(c)) if "\uf000" <= c <= "\uf0ff" else c for c in t)
+
+
 def _para_text(p) -> str:
     parts: List[str] = []
 
@@ -43,7 +50,13 @@ def _para_text(p) -> str:
                 # mc:Fallback: metin kutularının eski (VML) kopyası; okunursa metin iki kez gelir
                 continue
             if tag == _q("t"):
-                parts.append(child.text or "")
+                parts.append(_pua_cevir(child.text or ""))
+            elif tag == _q("sym"):
+                # Ekle > Simge ile eklenen karakter (ör. Symbol yazı tipinde yıldız: F02A)
+                try:
+                    parts.append(sembol_karakteri(int(child.get(_q("char")) or "0", 16)))
+                except ValueError:
+                    parts.append("\ufffc")
             elif tag == _q("tab"):
                 parts.append("\t")
             elif tag in (_q("br"), _q("cr")):
