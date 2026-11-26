@@ -64,3 +64,25 @@ def etiket_duzeni(path: str):
     d.add_paragraph("Üye : Mehmet Kaya (222)")
     d.add_paragraph("Üye : Fatma Demir (333)")
     d.save(path)
+
+
+def emsal_duzeni(path: str, yildiz_sonrasi=("Tetkik Hakimi",)):
+    """Hakim bilgileri yıldızdan önce, 'Emsal' bölümünden sonra yazılmış belge."""
+    d = docx.Document()
+    t = d.add_table(rows=4, cols=3)
+    for i, row in enumerate([("ESAS NO", ":", "2025/5"), ("MAHKEMESİ", ":", "İzmir 2. Asliye Hukuk Mahkemesi"),
+                             ("DAİRESİ", ":", "4. Hukuk Dairesi"), ("KONUSU", ":", "Tazminat")]):
+        for j, v in enumerate(row):
+            t.cell(i, j).text = v
+    d.add_paragraph("Gövde metni. Direnme kararı veren mahkeme hakimi gerekçesinde ... belirtmiştir.")
+    d.add_paragraph("EMSAL KARARLAR:")
+    d.add_paragraph("Yargıtay HGK 2019/1 E. 2020/2 K.")
+    d.add_paragraph("Yargıtay 4. HD 2018/3 E. 2018/4 K.")
+    d.add_paragraph("")
+    for line in ALT_BOLUM:
+        d.add_paragraph(line)
+    d.add_paragraph("Sonuç ve öneri metni.")
+    d.add_paragraph("*******")
+    for line in yildiz_sonrasi:
+        d.add_paragraph(line)
+    d.save(path)

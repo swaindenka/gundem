@@ -69,12 +69,21 @@ def test_doc_karmasik_tablo():
     assert t.rows[3][0].text.strip().startswith("İlk kararı veren")
 
 
-def test_yildiz_yoksa_alt_bolum_bos(tmp_path):
+def test_yildiz_yoksa_hakimler_metinden_bulunur(tmp_path):
     p = str(tmp_path / "c.docx")
     ornekler.baslik_duzeni(p, yildiz="")
     case = extract_case(read_document(p))
+    assert len(parse_alt_bolum(case.alt_bolum)) == 9
+    assert "gövde" not in case.alt_bolum.lower()
+    assert any("kontrol edin" in u.lower() for u in case.uyarilar)
+
+
+def test_hakim_yoksa_uyari(tmp_path):
+    p = str(tmp_path / "d.docx")
+    ornekler.baslik_duzeni(p, alt=[], yildiz="")
+    case = extract_case(read_document(p))
     assert case.alt_bolum == ""
-    assert case.uyarilar
+    assert any("bulunamadı" in u for u in case.uyarilar)
 
 
 def test_split_daire():
@@ -98,7 +107,7 @@ def test_gundem_olustur(tmp_path):
     build_gundem(SABLON, [c1, c2], dt.date(2026, 12, 2), out, "")
 
     d = docx.Document(out)
-    assert len(d.tables) == 3
+    assert len(d.tables) == 4
     assert d.tables[0].rows[0].cells[0].text.startswith("2 ARALIK 2026 ÇARŞAMBA GÜNÜ GÜNDEMİ")
     assert d.tables[0].rows[1].cells[0].text.strip() == "TETKİK  HAKİMİ :"
     t1 = d.tables[1]
@@ -108,7 +117,7 @@ def test_gundem_olustur(tmp_path):
     assert t1.rows[2].cells[3].text == "13.12.2024 tarihli ve\n2024/9000 E. 2024/60000 K."
     metin = "\n".join(c.text for r in t1.rows for c in r.cells)
     assert "Test9isim" in metin and "Direnme kararını veren" in metin
-    t2 = d.tables[2]
+    t2 = d.tables[3]
     assert t2.rows[1].cells[0].text == "2"
     assert t2.rows[1].cells[1].text == "2025/77"
     # yer tutucu metinler kalmamalı
@@ -127,3 +136,37 @@ def test_tetkik_hakimi_yazilir(tmp_path):
     build_gundem(SABLON, [extract_case(read_document(a))], dt.date(2026, 12, 2), out, "Ad Soyad")
     d = docx.Document(out)
     assert d.tables[0].rows[1].cells[0].text.strip() == "TETKİK  HAKİMİ : Ad Soyad"
+
+
+@pytest.mark.parametrize("yildiz_sonrasi", [("Tetkik Hakimi",), ()])
+def test_hakimler_emsalden_sonra(tmp_path, yildiz_sonrasi):
+    p = str(tmp_path / "e.docx")
+    ornekler.emsal_duzeni(p, yildiz_sonrasi)
+    case = extract_case(read_document(p))
+    items = parse_alt_bolum(case.alt_bolum)
+    assert [k for k, _ in items] == [TEK, BASLIK, UYE, UYE, UYE, BASLIK, UYE, UYE, UYE]
+    assert "Sonuç" not in case.alt_bolum and "Yargıtay HGK" not in case.alt_bolum
+    assert any("Emsal" in u for u in case.uyarilar)
+
+
+def test_her_sayfada_baslik(tmp_path):
+    a = str(tmp_path / "a.docx")
+    ornekler.baslik_duzeni(a)
+    cases = []
+    for i in range(3):
+        c = extract_case(read_document(a))
+        c.sira_no = str(i + 1)
+        cases.append(c)
+    out = str(tmp_path / "g.docx")
+    build_gundem(SABLON, cases, dt.date(2026, 12, 2), out, "Ad Soyad")
+    d = docx.Document(out)
+    basliklar = [t for t in d.tables if "GÜNDEMİ" in t.rows[0].cells[0].text]
+    assert len(basliklar) == 3
+    for t in basliklar:
+        assert t.rows[0].cells[0].text.startswith("2 ARALIK 2026 ÇARŞAMBA GÜNÜ GÜNDEMİ")
+        assert t.rows[1].cells[0].text.strip() == "TETKİK  HAKİMİ : Ad Soyad"
+    # sıralama: başlık, dava, başlık, dava, başlık, dava
+    sira = ["B" if "GÜNDEMİ" in t.rows[0].cells[0].text else "D" for t in d.tables]
+    assert sira == ["B", "D", "B", "D", "B", "D"]
+    # sayfa sonu sayısı = dosya sayısı - 1
+    assert d.element.body.xml.count('w:type="page"') == 2

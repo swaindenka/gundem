@@ -278,13 +278,18 @@ def _build_case(tpl: _Template, case: CaseData, fixer: _IdFixer):
     return block
 
 
-def _page_break():
-    p = docx.oxml.OxmlElement("w:p")
+def _add_page_break(p):
+    """Paragrafın sonuna sayfa sonu ekler (yeni boş paragraf oluşturmadan)."""
     r = docx.oxml.OxmlElement("w:r")
     br = docx.oxml.OxmlElement("w:br")
     br.set(qn("w:type"), "page")
     r.append(br)
     p.append(r)
+
+
+def _new_page_break_paragraph():
+    p = docx.oxml.OxmlElement("w:p")
+    _add_page_break(p)
     return p
 
 
@@ -296,10 +301,29 @@ def build_gundem(template_path: str, cases: Sequence[CaseData], tarih: dt.date,
     _fill_header(tpl, tarih, tetkik_hakimi)
     fixer = _IdFixer(tpl.body)
     sect = tpl.body.find(qn("w:sectPr"))
+
+    # Her sayfanın başında tekrarlanacak kısım: başlık tablosu (tarih + tetkik hakimi)
+    # ve onunla dava tablosu arasındaki boşluk paragrafları
+    children = [c for c in tpl.body if c.tag != qn("w:sectPr")]
+    case_idx = children.index(tpl.case_tbl)
+    if tpl.header_tbl is not None and tpl.header_tbl in children[:case_idx]:
+        page_head = children[children.index(tpl.header_tbl):case_idx]
+    else:
+        page_head = []
+
     built: List = []
     for i, case in enumerate(cases):
         if i > 0:
-            built.append(_page_break())
+            # Sayfa sonunu önceki bloğun son paragrafına ekle; yoksa yeni paragraf
+            last = built[-1] if built else None
+            if last is not None and last.tag == qn("w:p"):
+                _add_page_break(last)
+            else:
+                built.append(_new_page_break_paragraph())
+            head = [copy.deepcopy(el) for el in page_head]
+            for el in head:
+                fixer.fix(el)
+            built.extend(head)
         built.extend(_build_case(tpl, case, fixer))
     for el in tpl.case_block:
         tpl.body.remove(el)
