@@ -86,3 +86,32 @@ def emsal_duzeni(path: str, yildiz_sonrasi=("Tetkik Hakimi",)):
     for line in yildiz_sonrasi:
         d.add_paragraph(line)
     d.save(path)
+
+
+def bolumlu_dava(klasor: str, adlar=("2025-123 birinci bölüm.docx", "2025-123 ikinci bölüm.docx",
+                                    "2025-123 üçüncü bölüm.docx")):
+    """Uzun bir dosyanın üç bölüme ayrılmış hali: tablo 1. bölümde, hakimler son bölümde."""
+    import os
+    yollar = [os.path.join(klasor, a) for a in adlar]
+    # 1. bölüm: üst tablo + gövde
+    d = docx.Document()
+    t = d.add_table(rows=4, cols=3)
+    t.cell(0, 0).text, t.cell(0, 1).text, t.cell(0, 2).text = "ESAS NO-MAHKEME", "DAİRE KARARI", "KONUSU"
+    t.cell(1, 0).text, t.cell(1, 1).text, t.cell(1, 2).text = "2025/123", "7. Hukuk Dairesi", "Kira alacağı"
+    t.cell(2, 0).text = "Bursa 1. Sulh Hukuk Mahkemesi"
+    t.cell(2, 1).text = "05.05.2024 tarihli ve 2024/10 E. 2024/20 K."
+    d.add_paragraph("Birinci bölüm gövde metni.")
+    d.save(yollar[0])
+    # 2. bölüm: yalnızca gövde (yanıltıcı 'kararı veren ... hakimi' ifadesi içerir)
+    d = docx.Document()
+    d.add_paragraph("İkinci bölüm. Direnme kararını veren mahkeme hakimi gerekçesinde şunu belirtmiştir.")
+    d.add_paragraph("Devam eden açıklamalar " * 20)
+    d.save(yollar[1])
+    # 3. bölüm: gövde + yıldız + hakimler
+    d = docx.Document()
+    d.add_paragraph("Üçüncü bölüm, sonuç kısmı.")
+    d.add_paragraph("*******")
+    for line in ALT_BOLUM:
+        d.add_paragraph(line)
+    d.save(yollar[2])
+    return yollar

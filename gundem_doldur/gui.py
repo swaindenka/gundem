@@ -12,7 +12,8 @@ from tkinter import filedialog, messagebox, ttk
 from typing import List, Optional
 
 from . import __version__
-from .extract import CaseData, extract_case, looks_complete
+from .bolumler import Dava, Parca, bolum_bilgisi
+from .extract import CaseData, extract_case, looks_complete, norm
 from .reader import read_document
 from .writer import AYLAR, build_gundem, gundem_basligi
 
@@ -45,7 +46,7 @@ class App(tk.Tk):
         self.title("Gündem Doldurucu %s" % __version__)
         self.geometry("1100x720")
         self.minsize(900, 600)
-        self.cases: List[CaseData] = []
+        self.davalar: List[Dava] = []
         self.current: Optional[int] = None
         self.template = resource_path("sablon", "BASLIK_TEST.docx")
         self.q: "queue.Queue" = queue.Queue()
@@ -53,6 +54,10 @@ class App(tk.Tk):
         self.after(100, self._poll)
         if ilk_dosyalar:
             self._load_files(ilk_dosyalar)
+
+    @property
+    def cases(self) -> List[CaseData]:
+        return [d.veri for d in self.davalar]
 
     # ------------------------------------------------------------------ UI
     def _build(self):
@@ -164,14 +169,20 @@ class App(tk.Tk):
         self.durum.config(text="Okunuyor: %d dosya..." % len(paths))
         self.config(cursor="watch")
 
+        def sirala(p):
+            grup, no = bolum_bilgisi(p)
+            ad = grup or norm(os.path.splitext(os.path.basename(p))[0]).lower()
+            return (ad, no or 0)
+
         def work():
-            for p in paths:
+            for p in sorted(paths, key=sirala):
                 logs: List[str] = []
                 try:
-                    doc = read_document(p, log=logs.append, is_good=looks_complete)
+                    grup, no = bolum_bilgisi(p)
+                    doc = read_document(p, log=logs.append,
+                                        is_good=lambda d: looks_complete(d, bolum=no is not None))
                     case = extract_case(doc, kaynak=p)
-                    case.uyarilar = logs + case.uyarilar
-                    self.q.put(("case", case))
+                    self.q.put(("case", (p, grup, no, case, logs)))
                 except Exception as e:
                     traceback.print_exc()
                     self.q.put(("error", "%s\n\n%s" % (os.path.basename(p), e)))
@@ -185,26 +196,42 @@ class App(tk.Tk):
                 kind, payload = self.q.get_nowait()
                 if kind == "case":
                     self._save_current()
-                    case: CaseData = payload
-                    if not case.sira_no:
-                        nums = [int(c.sira_no) for c in self.cases if c.sira_no.strip().isdigit()]
-                        case.sira_no = str(max(nums) + 1 if nums else len(self.cases) + 1)
-                    self.cases.append(case)
-                    self.liste.insert("end", self._liste_metni(case))
-                    self._sec(len(self.cases) - 1)
+                    self._dava_ekle(*payload)
                 elif kind == "error":
                     messagebox.showerror("Dosya okunamadı", payload)
                 elif kind == "done":
                     self.config(cursor="")
-                    self.durum.config(text="%d dosya yüklü." % len(self.cases))
+                    self.durum.config(text="%d dava yüklü." % len(self.davalar))
         except queue.Empty:
             pass
         self.after(100, self._poll)
 
+    def _dava_ekle(self, yol: str, grup: str, no: Optional[int], case: CaseData, logs: List[str]):
+        if no is not None:
+            parca = Parca(no=no, yol=yol, veri=case, kayit=logs)
+            mevcut = next((i for i, d in enumerate(self.davalar) if d.grup and d.grup == grup), None)
+            if mevcut is not None:
+                # Aynı davanın başka bir bölümü: mevcut davayla birleştir
+                self.davalar[mevcut].parca_ekle(parca)
+                self.liste.delete(mevcut)
+                self.liste.insert(mevcut, self._liste_metni(self.davalar[mevcut]))
+                self.current = None
+                self._sec(mevcut)
+                return
+            dava = Dava.bolumden(grup, parca)
+        else:
+            case.uyarilar = logs + case.uyarilar
+            dava = Dava.tek_dosya(case)
+        if not dava.veri.sira_no:
+            nums = [int(c.sira_no) for c in self.cases if c.sira_no.strip().isdigit()]
+            dava.veri.sira_no = str(max(nums) + 1 if nums else len(self.davalar) + 1)
+        self.davalar.append(dava)
+        self.liste.insert("end", self._liste_metni(dava))
+        self._sec(len(self.davalar) - 1)
+
     @staticmethod
-    def _liste_metni(case: CaseData) -> str:
-        ad = os.path.basename(case.kaynak)
-        return "%s. %s" % (case.sira_no or "?", ad)
+    def _liste_metni(dava: Dava) -> str:
+        return "%s. %s" % (dava.veri.sira_no or "?", dava.etiket())
 
     def _secim_degisti(self, _event=None):
         sel = self.liste.curselection()
@@ -222,8 +249,9 @@ class App(tk.Tk):
 
     def _show(self, idx: int):
         self.current = idx
-        case = self.cases[idx]
-        self.dosya_etiket.config(text=os.path.basename(case.kaynak))
+        dava = self.davalar[idx]
+        case = dava.veri
+        self.dosya_etiket.config(text="  +  ".join(os.path.basename(p) for p in dava.dosyalar))
         for key, _, lines in ALANLAR:
             w = self.widgets[key]
             val = getattr(case, key)
@@ -236,16 +264,16 @@ class App(tk.Tk):
         self.uyari.config(text="\n".join(case.uyarilar))
 
     def _save_current(self):
-        if self.current is None or self.current >= len(self.cases):
+        if self.current is None or self.current >= len(self.davalar):
             return
-        case = self.cases[self.current]
+        case = self.davalar[self.current].veri
         for key, _, lines in ALANLAR:
             w = self.widgets[key]
             val = w.get() if lines == 1 else w.get("1.0", "end-1c")
             setattr(case, key, val.strip("\n") if lines > 1 else val.strip())
         sel = self.liste.curselection()
         self.liste.delete(self.current)
-        self.liste.insert(self.current, self._liste_metni(case))
+        self.liste.insert(self.current, self._liste_metni(self.davalar[self.current]))
         for i in sel:
             self.liste.selection_set(i)
 
@@ -266,10 +294,10 @@ class App(tk.Tk):
             return
         idx = sel[0]
         self.current = None
-        del self.cases[idx]
+        del self.davalar[idx]
         self.liste.delete(idx)
-        if self.cases:
-            self._sec(min(idx, len(self.cases) - 1))
+        if self.davalar:
+            self._sec(min(idx, len(self.davalar) - 1))
         else:
             self._clear_fields()
 
@@ -280,15 +308,15 @@ class App(tk.Tk):
         self._save_current()
         i = sel[0]
         j = i + yon
-        if not (0 <= j < len(self.cases)):
+        if not (0 <= j < len(self.davalar)):
             return
-        a, b = self.cases[i], self.cases[j]
+        a, b = self.davalar[i], self.davalar[j]
         # Sıra numaraları sırada kalsın: numaraları da değiş tokuş et
-        a.sira_no, b.sira_no = b.sira_no, a.sira_no
-        self.cases[i], self.cases[j] = b, a
+        a.veri.sira_no, b.veri.sira_no = b.veri.sira_no, a.veri.sira_no
+        self.davalar[i], self.davalar[j] = b, a
         for k in (i, j):
             self.liste.delete(k)
-            self.liste.insert(k, self._liste_metni(self.cases[k]))
+            self.liste.insert(k, self._liste_metni(self.davalar[k]))
         self.current = None
         self._sec(j)
 
