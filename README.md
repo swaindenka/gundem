@@ -13,7 +13,7 @@ Kaynak Word belgelerindeki bilgileri okuyup **gündem tablosunu** (`sablon/BASLI
 1. **Dosya Ekle...** ile bir veya birden çok kaynak belge seçin (`.docx` ya da Word 97-2003 `.doc`).
 2. Program her belgeden şunları okur:
    - **Üstteki tablodan:** Esas No, Mahkeme, Daire, Daire Kararı (tarih ve E./K. numarası), Konusu
-   - **`*******` işaretinin altından:** ilk kararı veren hakim, BAM / direnme kararını veren daire hakimleri (BAŞKAN / ÜYE).
+   - **`***` / `*******` işaretinin altından:** ilk kararı veren hakim, BAM / direnme kararını veren daire hakimleri (BAŞKAN / ÜYE).
      Yıldızın altında hakim bilgisi yoksa **"Emsal" bölümünden sonrasına**, orada da yoksa belgenin geri
      kalanına bakılır; bu durumda program "kontrol edin" uyarısı gösterir.
 3. Sağdaki alanlarda okunan bilgileri kontrol edin; gerekirse düzeltin.
@@ -51,7 +51,16 @@ Program hakim satırlarını şablondaki biçime getirir: `BAŞKAN : Ad Soyad  (
 - Görevler bir sütunda alt alta, isimler ve siciller yan sütunlarda
 - Görevler: BAŞKAN, BAŞKAN V., BAŞKANVEKİLİ, KIDEMLİ ÜYE, ÜYE, HAKİM
 
-Yıldızın altındaki "Tetkik Hakimi ..." imzası hakim listesine alınmaz. Hakimler kutusunda
+Hakim isimleri ve sicilleri belgenin **son sayfalarında** yer aldığından, belgede birden çok aday
+varsa (ör. metnin ortasında alıntılanan eski bir kararın hakimleri, ortadaki bir `***` ayracı)
+**belgenin sonuna en yakın liste** alınır. Uzun bir belgede liste sondan değil de ortalardan
+alınmak zorunda kalınırsa program "DİKKAT" uyarısı gösterir.
+
+Yıldız işareti olarak `***`, `*******`, `* * *` (koyu ya da değil), Word'de **Ekle → Simge** ile
+eklenmiş yıldızlar ve `∗ ＊ ★` gibi yıldız karakterleri tanınır; yıldızlar metinle aynı satırda da olabilir.
+
+"Tetkik Hakimi ..." imzası (yıldızın hemen altında ya da listenin sonunda) hakim listesine alınmaz;
+imzanın altındaki hakim listesi yine okunur. Hakimler kutusunda
 düzenlenmiş hali görünür; görev / isim / sicil doğru ayrılmamışsa kaydetmeden önce düzeltebilirsiniz.
 
 ### Hakimler kutusu nasıl yorumlanır?
