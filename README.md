@@ -13,13 +13,16 @@ Kaynak Word belgelerindeki bilgileri okuyup **gündem tablosunu** (`sablon/BASLI
 1. **Dosya Ekle...** ile bir veya birden çok kaynak belge seçin (`.docx` ya da Word 97-2003 `.doc`).
 2. Program her belgeden şunları okur:
    - **Üstteki tablodan:** Esas No, Mahkeme, Daire, Daire Kararı (tarih ve E./K. numarası), Konusu
-   - **`*******` işaretinin altından:** ilk kararı veren hakim, BAM / direnme kararını veren daire hakimleri (BAŞKAN / ÜYE)
+   - **`*******` işaretinin altından:** ilk kararı veren hakim, BAM / direnme kararını veren daire hakimleri (BAŞKAN / ÜYE).
+     Yıldızın altında hakim bilgisi yoksa **"Emsal" bölümünden sonrasına**, orada da yoksa belgenin geri
+     kalanına bakılır; bu durumda program "kontrol edin" uyarısı gösterir.
 3. Sağdaki alanlarda okunan bilgileri kontrol edin; gerekirse düzeltin.
 4. Üstten **gündem tarihini** (gün / ay / yıl) seçin. Haftanın günü otomatik yazılır
    (ör. `2 ARALIK 2026 ÇARŞAMBA GÜNÜ GÜNDEMİ`).
 5. **Tetkik hakimi** kutusu isteğe bağlıdır; boş bırakılırsa gündemde boş kalır.
 6. **Gündemi Oluştur** ile `.docx` olarak kaydedin. Birden çok dosya eklediyseniz her biri
-   ayrı sayfada, sıra numarasıyla yer alır (sırayı ▲ ▼ ile değiştirebilirsiniz).
+   ayrı sayfada, sıra numarasıyla yer alır (sırayı ▲ ▼ ile değiştirebilirsiniz). Her sayfanın
+   başında tarih ve tetkik hakimi başlığı tekrarlanır.
 
 ### Hakimler kutusu nasıl yorumlanır?
 

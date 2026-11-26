@@ -231,29 +231,86 @@ def _is_star_line(line: str) -> bool:
     return len(s) >= 3 and set(s) <= set("*")
 
 
-_JUDGE_HINT = re.compile(r"HAKIM|BASKAN|UYE|KARARINI|KARARI VEREN")
+_STRONG_START = re.compile(r"KARARI(NI)?\s+VEREN")
+_HAKIM_WORD = re.compile(r"HAKIMI\b|HAKIMLERI\b")
 
 
-def extract_alt_bolum(doc: Document) -> str:
-    lines = doc.lines()
+def _clean_lines(lines: List[str]) -> List[str]:
+    out = [l.strip() for l in lines]
+    return [re.sub(r"[ ]{2,}", "  ", l) for l in out if l]
+
+
+def _is_judge_line(n: str) -> bool:
+    return bool(_MEMBER_RE.match(n) or _STRONG_START.search(n) or _HAKIM_WORD.search(n))
+
+
+def _judge_blocks(lines: List[str]) -> List[List[str]]:
+    """Metindeki ardışık hakim satırı bloklarını bulur.
+
+    Blok, 'kararı veren' ya da 'BAŞKAN/ÜYE' satırıyla başlar; hakim satırları sürdükçe devam eder.
+    '... hakimi' ile biten satırdan sonra gelen tek satırlık isim de bloğa dahil edilir.
+    """
+    blocks: List[List[str]] = []
+    i, n = 0, len(lines)
+    while i < n:
+        nl = norm(lines[i])
+        if not (_STRONG_START.search(nl) or _MEMBER_RE.match(nl)) or _is_star_line(lines[i]):
+            i += 1
+            continue
+        j = i
+        block: List[str] = []
+        while j < n and not _is_star_line(lines[j]):
+            nj = norm(lines[j])
+            if _is_judge_line(nj):
+                block.append(lines[j])
+            elif block and re.search(r"HAKIMI\s*:?$", norm(block[-1])) and len(lines[j]) <= 80:
+                block.append(lines[j])  # ayrı satırdaki ilk derece hakimi adı
+            else:
+                break
+            j += 1
+        has_judge = any(_MEMBER_RE.match(norm(l)) or _HAKIM_WORD.search(norm(l)) for l in block)
+        if has_judge:
+            blocks.append(block)
+        i = max(j, i + 1)
+    return blocks
+
+
+def find_alt_bolum(doc: Document) -> Tuple[str, str]:
+    """Hakim bilgilerini bulur. (metin, kaynak) döndürür; kaynak: yildiz / emsal / genel / ''.
+
+    1. '*******' işaretinin altı (hakim satırı içeriyorsa)
+    2. Yoksa 'Emsal' bölümünden sonra gelen hakim satırları
+    3. Yoksa belgedeki son hakim satırı bloğu
+    """
+    lines = _clean_lines(doc.lines())
     stars = [i for i, l in enumerate(lines) if _is_star_line(l)]
-    if not stars:
-        return ""
-    chosen: Optional[List[str]] = None
     fallback: Optional[List[str]] = None
     for idx in reversed(stars):
         end = next((j for j in stars if j > idx), len(lines))
-        section = [l.strip() for l in lines[idx + 1:end]]
-        section = [re.sub(r"[ ]{2,}", "  ", l) for l in section if l.strip()]
+        section = lines[idx + 1:end]
         if not section:
             continue
         if fallback is None:
             fallback = section
-        if any(_JUDGE_HINT.search(norm(l)) for l in section):
-            chosen = section
-            break
-    section = chosen or fallback or []
-    return "\n".join(section)
+        if _judge_blocks(section):
+            return "\n".join(section), "yildiz"
+
+    emsal = [i for i, l in enumerate(lines) if "EMSAL" in norm(l)]
+    for idx in reversed(emsal):
+        blocks = _judge_blocks(lines[idx + 1:])
+        if blocks:
+            return "\n".join(blocks[0]), "emsal"
+
+    blocks = _judge_blocks(lines)
+    if blocks:
+        return "\n".join(blocks[-1]), "genel"
+    if fallback:
+        return "\n".join(fallback), "yildiz"
+    return "", ""
+
+
+def extract_alt_bolum(doc: Document) -> str:
+    return find_alt_bolum(doc)[0]
 
 
 # Alt bölüm satır türleri
@@ -305,7 +362,7 @@ def extract_case(doc: Document, kaynak: str = "") -> CaseData:
     data.daire = h.get("daire", "")
     data.daire_karar = h.get("daire_karar", "")
     data.konu = h.get("konu", "")
-    data.alt_bolum = extract_alt_bolum(doc)
+    data.alt_bolum, alt_kaynak = find_alt_bolum(doc)
     if not h:
         data.uyarilar.append("Belgenin üstündeki tablo bulunamadı; esas/mahkeme/daire/konu alanlarını elle doldurun.")
     else:
@@ -314,7 +371,11 @@ def extract_case(doc: Document, kaynak: str = "") -> CaseData:
         if eksik:
             data.uyarilar.append("Bulunamayan alanlar: %s" % ", ".join(eksik))
     if not data.alt_bolum:
-        data.uyarilar.append("'*******' işaretinin altındaki hakim bilgileri bulunamadı.")
+        data.uyarilar.append("Hakim bilgileri bulunamadı ('*******' altında ve 'Emsal' bölümünden sonra bakıldı).")
+    elif alt_kaynak == "emsal":
+        data.uyarilar.append("Hakim bilgileri '*******' altında yoktu; 'Emsal' bölümünden sonra bulundu. Kontrol edin.")
+    elif alt_kaynak == "genel":
+        data.uyarilar.append("Hakim bilgileri '*******' altında yoktu; belgenin içinden bulundu. Kontrol edin.")
     return data
 
 
