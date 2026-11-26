@@ -419,7 +419,8 @@ def _transpoze(lines: List[str]) -> List[str]:
 # '... kararını veren hâkim: Ad Soyad' tek hakim satırıdır, bölünmez.
 _ROL_BOLME = r"(?<![A-Z])(?:KIDEMLI\s+UYE|BASKAN\s*VEKILI|BASKAN\s*V\.?|BASKAN|UYE)(?![A-Z])"
 _ROL_BOLME_BAS = re.compile(r"^%s" % _ROL_BOLME)
-_ROL_BOLME_ICINDE = re.compile(r"%s\s*[:\-–]" % _ROL_BOLME)
+_ROL_BOLME_ICINDE = re.compile(r"(?:%s|(?<![A-Z])UYELER(?![A-Z]))\s*[:\-–]" % _ROL_BOLME)
+_UYELER = re.compile(r"^UYELER(?![A-Z])\s*[:\-–]?\s*")
 
 
 def _baslik_uye_ayir(line: str) -> Tuple[str, str]:
@@ -435,13 +436,45 @@ def _baslik_uye_ayir(line: str) -> Tuple[str, str]:
         if _SICIL_SAYI.search(norm(kalan)) or _isim_gibi(_hazirla(kalan)) or _ROL_BAS.match(norm(kalan)):
             return line[:m.end()].rstrip(), kalan
     # 2) '... Heyeti : Başkan : Ad Soyad' / '... Dairesi; Başkan Ad Soyad 123'
-    for m in re.finditer(r"\s*[:;]\s*", line):
+    #    '... heyeti ( Başkan: Ad Soyad-5240)' / '... heyeti - Başkan: ...' / '... heyeti [Üyeler: ...]'
+    for m in re.finditer(r"\s*[:;(\[\-–]\s*", line):
         bas, kalan = line[:m.start()].strip(), line[m.end():].strip()
-        nb = norm(bas)
-        if (kalan and _ROL_BOLME_BAS.match(norm(kalan)) and len(bas) >= 10
+        nb, nk = norm(bas), norm(kalan)
+        if not (kalan and (_ROL_BOLME_BAS.match(nk) or _UYELER.match(nk)) and len(bas) >= 10
                 and not _ROL_BAS.match(nb) and not _SICIL_SAYI.search(nb)):
-            return bas + ":", kalan
+            continue
+        # Önceki kısım gerçekten başlık mı? ('Ad Soyad (Üye) 123' bölünmemeli)
+        ayrac = m.group(0).strip()
+        if _BASLIK_KELIME.search(nb) or (ayrac in (":", ";") and not _isim_gibi(_hazirla(bas))):
+            return bas.rstrip(" :;(-–[") + ":", kalan
     return "", line
+
+
+_BASLIK_KELIME = re.compile(r"KARARI(NI)?\s+VEREN|HUKMU\s+VEREN|HEYET|HAKIMLER|DAIRE|MAHKEME|KURUL"
+                            r"|(?<![A-Z])BAM(?![A-Z])|(?<![A-Z])H\.?\s*D\.?(?![A-Z])")
+
+
+def _parantez_duzelt(p: str) -> str:
+    """Bölme sonrası eşi kalmayan parantezleri atar: 'Ad Soyad-5240)' -> 'Ad Soyad-5240'."""
+    p = p.strip(" ,;.\t")
+    while p.endswith((")", "]")) and p.count(")") + p.count("]") > p.count("(") + p.count("["):
+        p = p[:-1].rstrip(" ,;.\t")
+    while p.startswith(("(", "[")) and p.count("(") + p.count("[") > p.count(")") + p.count("]"):
+        p = p[1:].lstrip(" ,;.\t")
+    return p
+
+
+def _uyeler_ac(p: str) -> List[str]:
+    """'Üyeler: A-1, B-2' -> ['Üye: A-1', 'Üye: B-2']."""
+    m = _UYELER.match(norm(p))
+    if not m:
+        return [p]
+    kalan = p[m.end():]
+    if len(_SICIL_SAYI.findall(norm(kalan))) >= 2:
+        isimler = _sicile_gore_bol(kalan)
+    else:
+        isimler = re.split(r"\s*(?:,|;|\s+ve\s+|\s+Ve\s+)\s*", kalan)
+    return ["Üye: " + x for x in (_parantez_duzelt(i) for i in isimler) if x]
 
 
 def _parcala(raw: str) -> List[str]:
@@ -458,7 +491,13 @@ def _parcala(raw: str) -> List[str]:
     baslik, line = _baslik_uye_ayir(line)
     if baslik:
         out.append(baslik)
+    return out + [x for p in _gorevlere_bol(line) for q in _uyeler_ac(p)
+                  for x in [_parantez_duzelt(q)] if x]
+
+
+def _gorevlere_bol(line: str) -> List[str]:
     # Aynı satırda birden çok görev: her 'Başkan :' / 'Üye :' önünden böl
+    out: List[str] = []
     n = norm(line)
     konumlar = [m.start() for m in _ROL_BOLME_ICINDE.finditer(n)]
     if len(konumlar) >= 2 or (konumlar and konumlar[0] > 0 and _ROL_BAS.match(n)):
@@ -469,9 +508,14 @@ def _parcala(raw: str) -> List[str]:
         if len(parcalar) >= 2:
             sonuc: List[str] = []
             for p in parcalar:
-                sonuc.extend(_sicile_gore_bol(p))
+                sonuc.extend(_sicile_gore_bol_uyeler_haric(p))
             return out + sonuc
-    return out + _sicile_gore_bol(line)
+    return out + _sicile_gore_bol_uyeler_haric(line)
+
+
+def _sicile_gore_bol_uyeler_haric(line: str) -> List[str]:
+    # 'Üyeler: A-1, B-2' bütün kalmalı; _uyeler_ac her ismi 'Üye:' olarak açar
+    return [line] if _UYELER.match(norm(line)) else _sicile_gore_bol(line)
 
 
 def _sicile_gore_bol(line: str) -> List[str]:
@@ -529,7 +573,7 @@ def _kalemler(lines: List[str]) -> List[_Kalem]:
             continue
         if _HAKIMLERI.search(n) or (line.endswith((":", ";")) and not _SICIL_SAYI.search(n)):
             # '... Hâkimleri;' -> '... Hâkimleri:' (şablondaki gibi)
-            kalemler.append(_Kalem(BASLIK, metin=re.sub(r"\s*[;:,]$", ":", line)))
+            kalemler.append(_Kalem(BASLIK, metin=re.sub(r"[\s;:,]*$", "", line) + ":"))
             continue
         if _STRONG_START.search(n) or _HAKIM_KELIME.search(n):
             # 'Yetkisizlik kararını veren hâkim: Ad Soyad-12345' (tek hakim)

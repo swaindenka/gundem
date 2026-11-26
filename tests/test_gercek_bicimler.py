@@ -210,3 +210,56 @@ def test_heyet_belgede_yildizdan_once(tmp_path):
 ])
 def test_tek_hakim_satiri_bolunmez(satir):
     assert parse_alt_bolum(satir) == [(TEK, satir)]
+
+
+PARANTEZLI = [
+    (BASLIK, "Birinci Kararı Veren BAM heyeti:"),
+    (UYE, "BAŞKAN\t: Musa Enes Çakmak  (5240)"),
+    (UYE, "ÜYE\t: Ali Veli  (6666)"),
+    (UYE, "ÜYE\t: Ayşe Kaya  (7777)"),
+]
+
+
+@pytest.mark.parametrize("satirlar", [
+    # kullanıcının bildirdiği: başkan parantez içinde başlıkla aynı satırda, üyeler altta
+    ["Birinci Kararı Veren BAM heyeti ( Başkan: Musa Enes Çakmak-5240)",
+     "Üye: Ali Veli-6666", "Üye: Ayşe Kaya-7777"],
+    # tüm heyet parantez içinde tek satırda
+    ["Birinci Kararı Veren BAM heyeti ( Başkan: Musa Enes Çakmak-5240, Üye: Ali Veli-6666, Üye: Ayşe Kaya-7777)"],
+    # parantez açılıp üyeler alt satırlarda, son satırda kapanıyor
+    ["Birinci Kararı Veren BAM heyeti ( Başkan: Musa Enes Çakmak-5240,", "Üye: Ali Veli-6666,",
+     "Üye: Ayşe Kaya-7777)"],
+    # her üye kendi parantezinde
+    ["Birinci Kararı Veren BAM heyeti ( Başkan: Musa Enes Çakmak-5240)", "( Üye: Ali Veli-6666)",
+     "( Üye: Ayşe Kaya-7777)"],
+    # 'Üyeler:' çoğul yazım
+    ["Birinci Kararı Veren BAM heyeti (Başkan: Musa Enes Çakmak-5240, Üyeler: Ali Veli-6666, Ayşe Kaya-7777)"],
+    ["Birinci Kararı Veren BAM heyeti (Başkan: Musa Enes Çakmak-5240)", "Üyeler: Ali Veli-6666 ve Ayşe Kaya-7777"],
+    # köşeli parantez / tire ayracı
+    ["Birinci Kararı Veren BAM heyeti [Başkan: Musa Enes Çakmak-5240]", "Üye: Ali Veli-6666", "Üye: Ayşe Kaya-7777"],
+    ["Birinci Kararı Veren BAM heyeti - Başkan: Musa Enes Çakmak 5240 Üye: Ali Veli 6666 Üye: Ayşe Kaya 7777"],
+])
+def test_baskan_parantez_icinde(satirlar):
+    assert parse_alt_bolum("\n".join(satirlar)) == PARANTEZLI
+
+
+@pytest.mark.parametrize("satir,beklenen", [
+    # isimden sonra görev yazılan satırlar başlık sanılmamalı
+    ("Mehmet Demir (Üye) 34567", (UYE, "ÜYE\t: Mehmet Demir  (34567)")),
+    ("Mehmet Demir - Üye - 34567", (UYE, "ÜYE\t: Mehmet Demir  (34567)")),
+    ("Mehmet Ali Demir (Başkan) sicil:34567", (UYE, "BAŞKAN\t: Mehmet Ali Demir  (34567)")),
+])
+def test_isimden_sonra_gorev_bolunmez(satir, beklenen):
+    assert parse_alt_bolum(satir) == [beklenen]
+
+
+def test_parantezli_heyet_belgede(tmp_path):
+    p = _belge(str(tmp_path / "p.docx"), [], [
+        "İlk Kararı Veren İlk Derece Hâkimi: Hakan Yıldız-445566",
+        "Birinci Kararı Veren BAM heyeti ( Başkan: Musa Enes Çakmak-5240)",
+        "Üye: Ali Veli-6666", "Üye: Ayşe Kaya-7777",
+    ])
+    case = extract_case(read_document(p))
+    assert case.alt_kaynak == "yildiz"
+    assert parse_alt_bolum(case.alt_bolum) == [(TEK, "İlk Kararı Veren İlk Derece Hâkimi: Hakan Yıldız-445566")] \
+        + PARANTEZLI
