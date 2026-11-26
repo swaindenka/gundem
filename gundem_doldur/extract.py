@@ -415,27 +415,72 @@ def _transpoze(lines: List[str]) -> List[str]:
     return out
 
 
-def _parcala(raw: str) -> List[str]:
-    """Bir satırdaki birden çok hakimi ayrı satırlara böler.
+# Satırı bölmek için kullanılan görevler (ardından ':' / '-' gelir). 'Hakim' dahil değildir:
+# '... kararını veren hâkim: Ad Soyad' tek hakim satırıdır, bölünmez.
+_ROL_BOLME = r"(?<![A-Z])(?:KIDEMLI\s+UYE|BASKAN\s*VEKILI|BASKAN\s*V\.?|BASKAN|UYE)(?![A-Z])"
+_ROL_BOLME_BAS = re.compile(r"^%s" % _ROL_BOLME)
+_ROL_BOLME_ICINDE = re.compile(r"%s\s*[:\-–]" % _ROL_BOLME)
 
-    '... Hâkimleri; A sicil:1, B sicil:2'  -> ['... Hâkimleri;', 'A sicil:1', 'B sicil:2']
-    'A sicil:1, B sicil:2 ve C sicil:3'    -> ['A sicil:1', 'B sicil:2', 'C sicil:3']
-    'A sicil:1 <sekme> B sicil:2' (tablo)  -> ['A sicil:1', 'B sicil:2']
+
+def _baslik_uye_ayir(line: str) -> Tuple[str, str]:
+    """'... Heyeti : Başkan : Ad Soyad (123)' -> ('... Heyeti:', 'Başkan : Ad Soyad (123)').
+
+    Başlık ile ilk hakim aynı satırdaysa ayırır; ayrılacak bir şey yoksa ('', line) döndürür.
     """
-    line = raw.strip()
-    out: List[str] = []
-    m = re.search(r"HAKIMLERI\s*[;:,\-–]?\s*", norm(line))
+    n = norm(line)
+    # 1) '... Hâkimleri; Ad Soyad sicil:1, ...' (görev yazmasa da)
+    m = re.search(r"HAKIMLERI\s*[;:,\-–]?\s*", n)
     if m and line[m.end():].strip():
         kalan = line[m.end():].strip()
         if _SICIL_SAYI.search(norm(kalan)) or _isim_gibi(_hazirla(kalan)) or _ROL_BAS.match(norm(kalan)):
-            out.append(line[:m.end()].rstrip())
-            line = kalan
+            return line[:m.end()].rstrip(), kalan
+    # 2) '... Heyeti : Başkan : Ad Soyad' / '... Dairesi; Başkan Ad Soyad 123'
+    for m in re.finditer(r"\s*[:;]\s*", line):
+        bas, kalan = line[:m.start()].strip(), line[m.end():].strip()
+        nb = norm(bas)
+        if (kalan and _ROL_BOLME_BAS.match(norm(kalan)) and len(bas) >= 10
+                and not _ROL_BAS.match(nb) and not _SICIL_SAYI.search(nb)):
+            return bas + ":", kalan
+    return "", line
+
+
+def _parcala(raw: str) -> List[str]:
+    """Bir satırdaki birden çok hakimi ayrı satırlara böler.
+
+    '... Heyeti : Başkan : A (1)'           -> ['... Heyeti:', 'Başkan : A (1)']
+    '... Hâkimleri; A sicil:1, B sicil:2'  -> ['... Hâkimleri;', 'A sicil:1', 'B sicil:2']
+    'Başkan : A (1) Üye : B (2) Üye : C (3)' -> ['Başkan : A (1)', 'Üye : B (2)', 'Üye : C (3)']
+    'A sicil:1, B sicil:2 ve C sicil:3'    -> ['A sicil:1', 'B sicil:2', 'C sicil:3']
+    'A sicil:1 <sekme> B sicil:2' (tablo)  -> ['A sicil:1', 'B sicil:2']
+    """
+    line = raw.strip().replace("̇", "")
+    out: List[str] = []
+    baslik, line = _baslik_uye_ayir(line)
+    if baslik:
+        out.append(baslik)
+    # Aynı satırda birden çok görev: her 'Başkan :' / 'Üye :' önünden böl
+    n = norm(line)
+    konumlar = [m.start() for m in _ROL_BOLME_ICINDE.finditer(n)]
+    if len(konumlar) >= 2 or (konumlar and konumlar[0] > 0 and _ROL_BAS.match(n)):
+        if konumlar[0] != 0:
+            konumlar = [0] + konumlar
+        parcalar = [line[a:b].strip(" ,;.\t") for a, b in zip(konumlar, konumlar[1:] + [len(line)])]
+        parcalar = [p for p in parcalar if p]
+        if len(parcalar) >= 2:
+            sonuc: List[str] = []
+            for p in parcalar:
+                sonuc.extend(_sicile_gore_bol(p))
+            return out + sonuc
+    return out + _sicile_gore_bol(line)
+
+
+def _sicile_gore_bol(line: str) -> List[str]:
     if len(_SICIL_SAYI.findall(norm(line))) >= 2:
         parcalar = [p.strip(" ,;.\t") for p in _BOLUCU.split(line)]
         parcalar = [p for p in parcalar if p]
         if len(parcalar) >= 2:
-            return out + parcalar
-    return out + [line]
+            return parcalar
+    return [line]
 
 
 def _isim_sicil_var_mi(metin: str) -> bool:
@@ -484,7 +529,7 @@ def _kalemler(lines: List[str]) -> List[_Kalem]:
             continue
         if _HAKIMLERI.search(n) or (line.endswith((":", ";")) and not _SICIL_SAYI.search(n)):
             # '... Hâkimleri;' -> '... Hâkimleri:' (şablondaki gibi)
-            kalemler.append(_Kalem(BASLIK, metin=re.sub(r"\s*[;,]$", ":", line)))
+            kalemler.append(_Kalem(BASLIK, metin=re.sub(r"\s*[;:,]$", ":", line)))
             continue
         if _STRONG_START.search(n) or _HAKIM_KELIME.search(n):
             # 'Yetkisizlik kararını veren hâkim: Ad Soyad-12345' (tek hakim)
@@ -542,7 +587,11 @@ def _hakim_satiri_mi(line: str) -> bool:
     if _STRONG_START.search(n) or _HAKIM_KELIME.search(n) or re.search(r"SICIL\s*(NO)?\s*[:.]?\s*\d", n):
         return True
     h = _hazirla(line)
-    return _uye_ayristir(h) is not None or bool(_ROL_BAS.match(norm(h)))
+    if _uye_ayristir(h) is not None or _ROL_BAS.match(norm(h)):
+        return True
+    # '... Heyeti : Başkan : Ad Soyad (123)' gibi başlık + hakim aynı satırda
+    parcalar = _parcala(line)
+    return len(parcalar) > 1 and any(_uye_ayristir(_hazirla(p)) is not None for p in parcalar)
 
 
 def _devam_satiri_mi(line: str) -> bool:

@@ -165,3 +165,48 @@ def test_isimsiz_hakim_cumlesi_sayilmaz(tmp_path):
     p = str(tmp_path / "e.docx")
     d.save(p)
     assert extract_case(read_document(p)).alt_bolum == ""
+
+
+HEYET = [
+    (BASLIK, "Direnme kararı veren Bölge Adliye Mah. Heyeti:"),
+    (UYE, "BAŞKAN\t: Musa Enes Çakmak  (5555)"),
+    (UYE, "ÜYE\t: Ali Veli  (6666)"),
+    (UYE, "ÜYE\t: Ayşe Kaya  (7777)"),
+]
+
+
+@pytest.mark.parametrize("satirlar", [
+    # kullanıcının bildirdiği: başlık ile Başkan aynı satırda, üyeler altta
+    ["Direnme kararı veren Bölge Adliye Mah. Heyeti : Başkan : Musa Enes Çakmak (5555)",
+     "Üye : Ali Veli (6666)", "Üye : Ayşe Kaya (7777)"],
+    # hepsi tek satırda, ayraçsız
+    ["Direnme kararı veren Bölge Adliye Mah. Heyeti : Başkan : Musa Enes Çakmak (5555) "
+     "Üye : Ali Veli (6666) Üye : Ayşe Kaya (7777)"],
+    # hepsi tek satırda, virgüllü, tireli
+    ["Direnme kararı veren Bölge Adliye Mah. Heyeti; Başkan - Musa Enes Çakmak - 5555, "
+     "Üye - Ali Veli - 6666, Üye - Ayşe Kaya - 7777."],
+    # başlık ayrı satırda, üyeler tek satırda
+    ["Direnme kararı veren Bölge Adliye Mah. Heyeti :",
+     "Başkan : Musa Enes Çakmak (5555), Üye : Ali Veli (6666), Üye : Ayşe Kaya (7777)"],
+])
+def test_heyet_basligi_ile_baskan_ayni_satirda(satirlar):
+    assert parse_alt_bolum("\n".join(satirlar)) == HEYET
+
+
+def test_heyet_belgede_yildizdan_once(tmp_path):
+    """Aynı biçim yıldızdan önce (gövdede arama) da bulunmalı."""
+    p = _belge(str(tmp_path / "h.docx"),
+               ["Direnme kararı veren Bölge Adliye Mah. Heyeti : Başkan : Musa Enes Çakmak (5555)",
+                "Üye : Ali Veli (6666)", "Üye : Ayşe Kaya (7777)"],
+               ["Saygıyla arz olunur."])
+    case = extract_case(read_document(p))
+    assert parse_alt_bolum(case.alt_bolum) == HEYET
+
+
+@pytest.mark.parametrize("satir", [
+    "Direnme Kararını Veren İlk Derece Hâkimi; Mustafa Enes sicil:3111547",
+    "Yetkisizlik kararını veren hâkim: Ali Veli-1111111",
+    "İlk kararı veren ilk derece mahkemesi (Bakırköy 55. Asliye Hukuk Mahkemesi) hakimi Ali Veli 9999999",
+])
+def test_tek_hakim_satiri_bolunmez(satir):
+    assert parse_alt_bolum(satir) == [(TEK, satir)]
